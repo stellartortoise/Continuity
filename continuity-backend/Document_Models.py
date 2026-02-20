@@ -3,7 +3,7 @@ import Document_Controls
 
 class Project:
     def __init__(self, name, description, id=None, created_at=None):
-        self.id = id
+        self.id = [controller.id_generator(controller.PROJECT_PRE, controller.project), id][id is not None]
         self.name = name
         self.description = description
         self.created_at = [datetime.now().timestamp(), created_at][created_at is not None]

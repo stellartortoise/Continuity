@@ -7,11 +7,23 @@ db = TinyDB('cannon.json') # Main Database file
 project = db.table("project")
 story = db.table("story")
 event = db.table("event")
+stats = db.table("stats")
+
+# KEYS
+PROJECT_PRE = "proj_"
+STORY_PRE = "stry_"
+EVENT_PRE = "evnt_"
 
 # -------------- Projects -------------------#
 def create_project(name, description):
     project_meta = Project(name=name, description=description)
-    project.insert(project_meta.__dict__)
+    try:
+        total = stats.all()[0]['project_index']
+        project.insert(project_meta.__dict__)
+        stats.update({'project_count': get_count(project), "project_index": int(total) + 1})
+    except:
+        print("No stats found")
+
     return project_meta
 
 def modify_project(project_id, name, description):
