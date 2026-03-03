@@ -1,6 +1,10 @@
 # GGUF model files
 *.gguf
 
+# HuggingFace model cache (stored in project)
+continuity-ai-prototype/AI/models/huggingface_cache/
+continuity-data-ingestion/AI/models/huggingface_cache/
+
 # Python
 __pycache__/
 *.py[cod]

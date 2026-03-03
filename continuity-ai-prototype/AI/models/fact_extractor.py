@@ -17,6 +17,8 @@ class FactExtractor:
         rules_fallback: bool = False,
         temperature: float = 0.2,
         max_tokens: int = 160,
+        auto_validate_facts: bool = False,
+        fact_validator=None,
     ):
         self.llm = llm
         self.use_llm = use_llm
@@ -24,6 +26,18 @@ class FactExtractor:
         self.rules_fallback = rules_fallback
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.auto_validate_facts = auto_validate_facts
+        self.fact_validator = fact_validator
+
+        # Lazy load fact validator if needed
+        if self.fact_validator is None:
+            try:
+                from models.fact_validator import FactValidator
+                self.fact_validator = FactValidator()
+                logger.info("Fact validator initialized (available for on-demand validation)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize fact validator: {e}. Validation will not be available.")
+                self.fact_validator = None
 
     # ---------------- Public API ----------------
     async def extract_facts_for_entities(
@@ -100,7 +114,17 @@ class FactExtractor:
                 if key not in seen:
                     uniq.append(f)
                     seen.add(key)
-            results[ent_id] = uniq[: self.max_facts_per_entity]
+
+            # Apply fact validation only if auto-validation is enabled
+            entity_facts = uniq[: self.max_facts_per_entity]
+            if self.auto_validate_facts and self.fact_validator and len(entity_facts) > 1:
+                try:
+                    entity_facts = self.fact_validator.validate_facts(entity_facts)
+                    logger.debug(f"Auto-validated {len(entity_facts)} facts for entity {name}")
+                except Exception as e:
+                    logger.warning(f"Fact validation failed for entity {name}: {e}")
+
+            results[ent_id] = entity_facts
 
             processed += 1
             if progress:
@@ -115,6 +139,37 @@ class FactExtractor:
                     logger.debug("progress callback failed (per-entity)", exc_info=True)
 
         return results
+
+    def validate_entity_facts(self, entities: List[dict]) -> List[dict]:
+        """
+        Validate facts for entities on-demand (after extraction).
+
+        Args:
+            entities: List of entity dicts with facts
+
+        Returns:
+            List of entities with validated facts (adds contradicts/entails metadata)
+        """
+        if not self.fact_validator:
+            logger.warning("Fact validator not available. Returning entities unchanged.")
+            return entities
+
+        validated_entities = []
+        for entity in entities:
+            entity_copy = entity.copy()
+            facts = entity_copy.get("facts", [])
+
+            if len(facts) > 1:
+                try:
+                    validated_facts = self.fact_validator.validate_facts(facts)
+                    entity_copy["facts"] = validated_facts
+                    logger.info(f"Validated {len(validated_facts)} facts for entity {entity.get('name', 'unknown')}")
+                except Exception as e:
+                    logger.warning(f"Fact validation failed for entity {entity.get('name', 'unknown')}: {e}")
+
+            validated_entities.append(entity_copy)
+
+        return validated_entities
 
     # ---------------- LLM extraction ----------------
     async def _llm_extract_facts_for_sentence(self, name: str, sentence: str) -> List[str]:
@@ -141,7 +196,32 @@ class FactExtractor:
             logger.exception("LLM generation failed; returning no facts for sentence")
             return []
         data = self._safe_json(text)
-        facts = [s.strip() for s in data.get("facts", []) if isinstance(s, str) and s.strip()]
+        raw_facts = [s.strip() for s in data.get("facts", []) if isinstance(s, str) and s.strip()]
+
+        # Filter out garbage facts (fragments, incomplete sentences)
+        facts = []
+        for fact in raw_facts:
+            # Must be a complete sentence (has subject + verb, ends with punctuation or is substantial)
+            if len(fact) < 10:  # Too short to be a meaningful fact
+                logger.debug("Rejected fact (too short): '%s'", fact)
+                continue
+
+            # Must contain at least one verb-like word (basic heuristic)
+            words = fact.lower().split()
+            has_verb = any(w in {"is", "was", "were", "are", "has", "had", "have", "been", "became",
+                                "served", "worked", "lived", "died", "born", "became", "held", "led"}
+                          for w in words)
+
+            # Or must be a complete sentence (contains subject + predicate structure)
+            # Simple heuristic: has at least 3 words and doesn't start with preposition/conjunction
+            starts_with_fragment = words[0] in {"from", "to", "in", "at", "on", "and", "or", "but"}
+
+            if not has_verb and (len(words) < 3 or starts_with_fragment):
+                logger.debug("Rejected fact (fragment): '%s'", fact)
+                continue
+
+            facts.append(fact)
+
         return facts
 
     # ---------------- Helpers ----------------

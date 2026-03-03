@@ -3,7 +3,8 @@ import json
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional
+import logging
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,11 +14,16 @@ from models.ner_extractor import HybridNERExtractor
 from models.fact_extractor import FactExtractor
 from config.settings import EXPORT_JSON_DIR
 
+logger = logging.getLogger(__name__)
+
 # ---------------- Models ----------------
 class ExtractRequest(BaseModel):
     text: str
     time_id: Optional[str] = "t_001"
     use_llm: Optional[bool] = None
+
+class ValidateFactsRequest(BaseModel):
+    entities: List[Dict[str, Any]]
 
 # ---------------- In-memory job store ----------------
 JOBS: Dict[str, Dict[str, Any]] = {}
@@ -100,6 +106,28 @@ def create_app(
         if job["status"] != "done" or job["result"] is None:
             raise HTTPException(status_code=202, detail="Job not finished")
         return job["result"]
+
+    @app.post("/entities/validate-facts")
+    async def validate_facts(req: ValidateFactsRequest) -> Dict[str, Any]:
+        """
+        Validate facts for entities using NLI-based contradiction detection.
+
+        This endpoint takes entities with facts and returns them with validation metadata
+        (contradicts, entails, validation_confidence).
+        """
+        if not fact_extractor:
+            raise HTTPException(status_code=503, detail="Fact extractor not available")
+
+        try:
+            validated_entities = fact_extractor.validate_entity_facts(req.entities)
+            return {
+                "entities": validated_entities,
+                "count": len(validated_entities),
+                "message": f"Validated facts for {len(validated_entities)} entities"
+            }
+        except Exception as e:
+            logger.error(f"Fact validation error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
 
     return app
 

@@ -8,8 +8,9 @@ load_dotenv()
 
 # ---------------- Model Configuration ----------------
 # Primary (legacy) model path (used elsewhere in the app)
-MODEL_NAME = os.getenv("MODEL_NAME", "DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf")
-MODEL_PATH = os.getenv("MODEL_PATH", "./models/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf")
+# Use Qwen 2.5 3B Q6_K for best quality fact extraction
+MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5-3b-instruct-q6_k.gguf")
+MODEL_PATH = os.getenv("MODEL_PATH", "./models/qwen2.5-3b-instruct-q6_k.gguf")
 
 # NEW: Fact extraction model (Qwen 2.5 3B Instruct Q6_K or any GGUF)
 # Accept either a full path (FACT_MODEL_PATH), or a bare filename we resolve under ./models
@@ -27,6 +28,21 @@ if FACT_MODEL_PATH:
 else:
     # If not provided, default to the legacy MODEL_PATH
     FACT_MODEL_PATH = MODEL_PATH
+
+# NER Model Configuration
+# Use BERT-base NER (reliable, well-tested)
+NER_MODEL_NAME = os.getenv("NER_MODEL_NAME", "dslim/bert-base-NER")
+NER_CONFIDENCE_THRESHOLD = float(os.getenv("NER_CONFIDENCE_THRESHOLD", "0.85"))
+
+# Local Model Cache Configuration
+# Store HuggingFace models in project folder instead of user cache
+MODELS_CACHE_DIR = os.getenv("MODELS_CACHE_DIR", "./models/huggingface_cache")
+os.makedirs(MODELS_CACHE_DIR, exist_ok=True)
+
+# Vector Database Configuration (for RAG)
+VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH", "./data/vector_db")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", "5"))
 
 # ---------------- Web API Configuration ----------------
 API_HOST = os.getenv("API_HOST", "0.0.0.0")

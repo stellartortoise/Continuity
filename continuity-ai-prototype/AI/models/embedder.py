@@ -3,7 +3,7 @@ import logging
 from typing import List
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from config.settings import EMBEDDING_MODEL
+from config.settings import EMBEDDING_MODEL, MODELS_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +12,9 @@ class Embedder:
     """SentenceTransformer-based text embedding."""
 
     def __init__(self, model_name: str = EMBEDDING_MODEL):
-        logger.info("Loading embedding model: %s", model_name)
-        self.model = SentenceTransformer(model_name)
-        logger.info("Embedding model loaded successfully")
+        logger.info("Loading embedding model: %s (cache: %s)", model_name, MODELS_CACHE_DIR)
+        self.model = SentenceTransformer(model_name, cache_folder=MODELS_CACHE_DIR)
+        logger.info("Embedding model loaded from cache")
 
     def embed_text(self, text: str) -> np.ndarray:
         try:

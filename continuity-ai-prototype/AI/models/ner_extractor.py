@@ -3,6 +3,7 @@ import re
 from typing import List, Dict, Any, Tuple
 import torch  # type: ignore
 from transformers import pipeline  # type: ignore
+from config.settings import MODELS_CACHE_DIR, NER_CONFIDENCE_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +30,28 @@ class NERExtractor:
 
     def __init__(self, model_name: str = "dslim/bert-base-NER"):
         self.model_name = model_name
-        logger.info("Loading NER model: %s", model_name)
+        logger.info("Loading NER model: %s (cache: %s)", model_name, MODELS_CACHE_DIR)
         try:
+            # Load model and tokenizer with cache_dir, then pass to pipeline
+            from transformers import AutoModelForTokenClassification, AutoTokenizer
+
+            model = AutoModelForTokenClassification.from_pretrained(
+                model_name,
+                cache_dir=MODELS_CACHE_DIR
+            )
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                cache_dir=MODELS_CACHE_DIR
+            )
+
             self.ner_pipeline = pipeline(
                 "ner",
-                model=model_name,
-                tokenizer=model_name,
+                model=model,
+                tokenizer=tokenizer,
                 aggregation_strategy="simple",
                 device=0 if torch.cuda.is_available() else -1,
             )
-            logger.info("[OK] NER model loaded")
+            logger.info("[OK] NER model loaded from cache")
         except Exception as e:
             logger.error("Failed to load NER model: %s", e)
             raise
@@ -57,6 +70,11 @@ class NERExtractor:
             logger.info("Extracting entities from %d chars...", len(text))
             ner_results = self.ner_pipeline(text)
             logger.info("NER found %d entities", len(ner_results))
+
+            # Debug: Log raw NER results
+            for r in ner_results:
+                logger.debug("NER raw: entity='%s', type=%s, score=%.3f",
+                           r.get("word", ""), r.get("entity_group", ""), r.get("score", 0.0))
 
             by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
             entity_counter = 1
@@ -79,7 +97,10 @@ class NERExtractor:
 
                 entity_type = self.label_mapping.get(r.get("entity_group", "MISC"), "concept")
                 confidence = float(r.get("score", 0.0))
-                if confidence < 0.85:
+                # Filter by confidence threshold (configurable via NER_CONFIDENCE_THRESHOLD)
+                if confidence < NER_CONFIDENCE_THRESHOLD:
+                    logger.debug("Filtered entity '%s' (type=%s, confidence=%.3f < %.2f)",
+                                entity_name, entity_type, confidence, NER_CONFIDENCE_THRESHOLD)
                     continue
 
                 key = (entity_type, normalized)

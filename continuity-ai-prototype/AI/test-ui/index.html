@@ -29,6 +29,9 @@
     #submitBtn:disabled { opacity: .6; cursor: not-allowed; }
     #clearBtn { background: #f0f0f0; color: #666; }
     #clearBtn:hover { background: #e0e0e0; }
+    #validateBtn { background: linear-gradient(135deg,#f093fb 0%,#f5576c 100%); color: white; display: none; }
+    #validateBtn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(240,147,251,.4); }
+    #validateBtn:disabled { opacity: .6; cursor: not-allowed; }
 
     .response-section { background: #f8f9fa; border-radius: 10px; padding: 20px; min-height: 200px; }
     .response-label { color: #555; font-weight: 600; margin-bottom: 10px; }
@@ -57,10 +60,16 @@
     .type-unknown { background:#f5f5f5; color:#757575; }
     .entity-aliases { margin-bottom:10px; font-size:14px; color:#666; }
     .entity-facts { margin-top:10px; }
-    .fact-item { background:#f8f9fa; padding:8px; margin:5px 0; border-radius:6px; font-size:13px; }
+    .fact-item { background:#f8f9fa; padding:8px; margin:5px 0; border-radius:6px; font-size:13px; position:relative; }
+    .fact-item.validated-clean { background:#f0fdf4; border-left:4px solid #22c55e; }
+    .fact-item.validated-contradiction { background:#fef2f2; border-left:4px solid #ef4444; }
     .fact-key { font-weight:600; color:#555; }
     .fact-value { color:#333; }
     .fact-time { font-size:11px; color:#999; margin-left:5px; }
+    .fact-validation { margin-top:6px; padding:6px; border-radius:4px; font-size:11px; font-weight:600; }
+    .fact-contradiction { background:#fee; color:#c53030; border-left:3px solid #e53e3e; }
+    .fact-entailment { background:#e6fffa; color:#234e52; border-left:3px solid #38b2ac; }
+    .fact-clean-badge { display:inline-block; margin-left:8px; padding:2px 8px; background:#dcfce7; color:#166534; border-radius:12px; font-size:10px; font-weight:700; }
     .entity-id { font-size:11px; color:#999; margin-top:10px; }
 
     .json-container { background:#1e1e1e; border-radius:10px; padding:20px; margin-top:20px; max-height:500px; overflow-y:auto; }
@@ -122,6 +131,7 @@
 
     <div class="button-row">
       <button id="submitBtn" onclick="startExtractJob()">Extract Entities</button>
+      <button id="validateBtn" onclick="validateFacts()">🔍 Cross-Check Facts</button>
       <button id="clearBtn" onclick="clearAll()">Clear</button>
     </div>
 
@@ -298,6 +308,10 @@
         resultsContainer.style.display = 'block';
         displayEntities(extractedEntities);
         displayJSON(data);
+
+        // Show validation button if there are entities with facts
+        const hasFactsToValidate = extractedEntities.some(e => e.facts && e.facts.length > 1);
+        document.getElementById('validateBtn').style.display = hasFactsToValidate ? 'block' : 'none';
       } catch (error) {
         responseDiv.innerHTML = `
           <div class="error">
@@ -392,6 +406,52 @@
       });
     }
 
+    // ===== Validate Facts =====
+    async function validateFacts() {
+      const validateBtn = document.getElementById('validateBtn');
+      const responseDiv = document.getElementById('response');
+      const loadingSection = document.getElementById('loadingSection');
+
+      if (!extractedEntities || extractedEntities.length === 0) {
+        responseDiv.innerHTML = '<div class="error">No entities to validate!</div>';
+        loadingSection.style.display = 'block';
+        return;
+      }
+
+      validateBtn.disabled = true;
+      validateBtn.textContent = '🔍 Validating...';
+      responseDiv.innerHTML = '<div class="loading">🔎 Cross-checking facts for contradictions and entailments...</div>';
+      loadingSection.style.display = 'block';
+
+      try {
+        const res = await fetch(`${API_BASE}/entities/validate-facts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entities: extractedEntities })
+        });
+
+        if (!res.ok) throw new Error(`Validation error: ${res.status}`);
+        const data = await res.json();
+
+        extractedEntities = data.entities || [];
+        displayEntities(extractedEntities);
+        displayJSON({ entities: extractedEntities, count: data.count, message: data.message });
+
+        responseDiv.innerHTML = `<div class="success">✅ ${data.message}</div>`;
+        setTimeout(() => { loadingSection.style.display = 'none'; }, 2000);
+      } catch (error) {
+        responseDiv.innerHTML = `
+          <div class="error">
+            <strong>Validation Error:</strong> ${escapeHtml(error.message)}<br>
+            Make sure the API is running and the fact validator is available.
+          </div>
+        `;
+      } finally {
+        validateBtn.disabled = false;
+        validateBtn.textContent = '🔍 Cross-Check Facts';
+      }
+    }
+
     // ===== Render helpers =====
     function displayEntities(entities) {
       const container = document.getElementById('entitiesContainer');
@@ -428,16 +488,44 @@
           ? `<div class="entity-aliases">aka: ${entity.aliases.map(escapeHtml).join(', ')}</div>` : '';
         const facts = entity.facts && entity.facts.length > 0
           ? `<div class="entity-facts">
-              ${entity.facts.map(f => `
-                <div class="fact-item">
-                  <span class="fact-key">Fact:</span>
-                  <span class="fact-value">${escapeHtml(f.fact || '')}</span>
-                  <span class="fact-time">
-                    [${escapeHtml((f.method || 'rule').toUpperCase())} • conf=${(f.confidence ?? '').toString()} • ${escapeHtml((f.evidence?.timeId) || '')}]
-                  </span>
-                  ${f.sourceText ? `<div style="margin-top:4px;color:#777;font-size:11px;">↳ <em>${escapeHtml(f.sourceText)}</em></div>` : ''}
-                </div>
-              `).join('')}
+              ${entity.facts.map((f, idx) => {
+                let validationHtml = '';
+                let factClass = 'fact-item';
+                let cleanBadge = '';
+
+                // Determine if fact has been validated
+                const isValidated = f.hasOwnProperty('contradicts') || f.hasOwnProperty('entails');
+
+                if (isValidated) {
+                  const hasContradictions = f.contradicts && f.contradicts.length > 0;
+                  const hasEntailments = f.entails && f.entails.length > 0;
+
+                  if (hasContradictions) {
+                    factClass += ' validated-contradiction';
+                    validationHtml += `<div class="fact-validation fact-contradiction">⚠️ Contradicts fact(s): ${f.contradicts.join(', ')}</div>`;
+                  } else {
+                    factClass += ' validated-clean';
+                    cleanBadge = '<span class="fact-clean-badge">✓ NO CONFLICTS</span>';
+                  }
+
+                  if (hasEntailments) {
+                    validationHtml += `<div class="fact-validation fact-entailment">✓ Supports fact(s): ${f.entails.join(', ')}</div>`;
+                  }
+                }
+
+                return `
+                  <div class="${factClass}">
+                    <span class="fact-key">Fact #${idx}:</span>
+                    <span class="fact-value">${escapeHtml(f.fact || '')}</span>
+                    ${cleanBadge}
+                    <span class="fact-time">
+                      [${escapeHtml((f.method || 'rule').toUpperCase())} • conf=${(f.confidence ?? '').toString()} • ${escapeHtml((f.evidence?.timeId) || '')}]
+                    </span>
+                    ${f.sourceText ? `<div style="margin-top:4px;color:#777;font-size:11px;">↳ <em>${escapeHtml(f.sourceText)}</em></div>` : ''}
+                    ${validationHtml}
+                  </div>
+                `;
+              }).join('')}
             </div>`
           : '';
 
@@ -472,6 +560,7 @@
       document.getElementById('response').textContent = 'Waiting for story text...';
       document.getElementById('loadingSection').style.display = 'block';
       document.getElementById('resultsContainer').style.display = 'none';
+      document.getElementById('validateBtn').style.display = 'none';
       extractedEntities = [];
     }
 
