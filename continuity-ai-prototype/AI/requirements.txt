@@ -6,8 +6,8 @@ python-dotenv==1.0.1
 
 # Entity extraction (NER) and fact validation dependencies
 # transformers 4.36.2+ supports microsoft/deberta-large-mnli for NLI-based fact validation
-transformers==4.36.2
-torch==2.1.2
+transformers>=4.41.0
+torch>=2.2.0
 
 # RAG system dependencies
 chromadb==0.5.23
