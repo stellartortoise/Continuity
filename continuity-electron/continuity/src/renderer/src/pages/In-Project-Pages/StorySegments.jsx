@@ -5,27 +5,11 @@ import EntityAnalysisCard from "../../components/ProjectLayout/EntityAnalysisCar
 
 const StorySegments = ({uploadedSegments}) => {
   const [openId, setOpenId] = useState(null);
-  // Will just be [] when the actual backend is implemented
-  // const [segments, setSegments] = useState(uploadedSegments||[]);
+
 
   const toggleCard = (id) => {
     setOpenId(prev => (prev=== id ? null : id));
   }
-
-  // useEffect(()=> {
-  //   async function fetchSegments(){
-  //     //THIS WILL BE REPLACED WITH THE ACTUAL BACKEND DATA
-  //     try {
-  //       const response = await fetch("/api/story-segments");
-  //       if (!response.ok) return;
-  //       const data = await response.json();
-  //       setSegments(data);
-  //     } catch (err) {
-  //       console.log("No backend yet, skipping fetch");
-  //     }
-  //   }
-  //   fetchSegments();
-  // }, []);
 
   return (
     <div className='story-segments'>

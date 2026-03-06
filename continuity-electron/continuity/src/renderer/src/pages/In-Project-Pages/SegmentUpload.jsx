@@ -1,29 +1,39 @@
 import { useState } from 'react'
-import mockAnalysisSegment from '../../components/TempAISub/AISub'
+import { extractEntities } from '../../services/aiService';
 import EntityAnalysisCard from '../../components/ProjectLayout/EntityAnalysisCard';
+import LoadingOverlay from '../../components/ProjectLayout/LoadingOverlay';
 
 const SegmentUpload = ({setSegments}) => {
     const [segment,setSegment] = useState("");
     const [analysis, setAnalysis] = useState(null);
+    const [loading, setLoading] = useState(false);
 
     const handleSubmit = async(e) => {
         e.preventDefault();
 
         if (!segment.trim()) return;
 
-        // later, send to main backend
-        console.log(segment);
-        const result = await mockAnalysisSegment(segment);
-        setAnalysis(result);
+        setLoading(true); // show the loading overlayyy
+        try {
+            //load backend
+            const result = await extractEntities(segment);
+            setAnalysis(result);
 
-        // Add new segment to app level state
-        setSegments(prev => [...prev, {
-            id: Date.now(),
-            title: `Segment ${prev.length + 1}`,
-            summary: result.summary,
-            text: segment,
-            entities: result.entities
-        }])
+            // Add new segment to app level state
+            setSegments(prev => [...prev, {
+                id: Date.now(),
+                title: `Segment ${prev.length + 1}`,
+                summary: result.summary,
+                text: segment,
+                entities: result.entities
+            }])
+        } catch(error){
+            console.error(error);
+        } finally {
+            setLoading(false); // hide the overlay
+        }
+
+
     }
 
     const handleAccept = (entityId, factId) => {
@@ -61,6 +71,9 @@ const SegmentUpload = ({setSegments}) => {
     
   return (
     <>
+    {/* loading overlay appears if segment is loading */}
+    {loading && <LoadingOverlay/>}
+
     <form className='segmentUpload' onSubmit={handleSubmit}>
         <label htmlFor='userSegment'>Submit your Story Segment:</label>
 
