@@ -18,26 +18,27 @@ EVENT_PRE = "evnt_"
 def create_project(name, description):
     project_meta = Project(name=name, description=description)
     try:
-        total = stats.all()[0]['project_index']
         project.insert(project_meta.__dict__)
-        stats.update({'project_count': get_count(project), "project_index": int(total) + 1})
+        project_count("increase")
     except:
         print("No stats found")
 
     return project_meta
 
-def modify_project(project_id, name, description):
-    project_meta = Project(name=name, description=description)
-    project.update(project_meta.__dict__, Query().id == project_id)
+def modify_project(project_id, **args):
+    args['modified_at'] = datetime.now().timestamp()
+    project.update(args, Query().id == project_id)
     return
 
 def delete_project(project_id):
     project_stories = story.get(Query().project_id == project_id)
-    for s in project_stories:
-        event.remove(Query().story_id == s.id)
+    if project_stories: # Check if project has stories
+        for s in project_stories:
+            event.remove(Query().story_id == s.id)
 
     story.remove(Query().project_id == project_id)
     project.remove(Query().id == project_id)
+    project_count("decrease")
     return
 
 def get_project(project_id):
@@ -50,7 +51,11 @@ def get_all_projects():
 # Create a story
 def create_story(project_id, title, body):
     story_meta = Story(project_id=project_id, title=title, body=body)
-    story.insert(story_meta.__dict__)
+    try:
+        story.insert(story_meta.__dict__)
+        story_count("increase")
+    except:
+        print("No stats found")
     return story_meta
 
 # Get all stories
@@ -66,10 +71,12 @@ def get_story(story_id):
 # Delete story
 def delete_story(story_id):
     # Clear Events associated with story first
+    length = event.count(Query().story_id == story_id)
     event.remove(Query().story_id == story_id)
-
+    event_count("decrease")
     # Clear story from db
     story.remove(Query().id == story_id)
+    story_count("decrease")
     return
 
 # Modify story
@@ -105,3 +112,44 @@ def modify_event(event_id, name, description, participants):
     event_meta = Event(name=name, description=description, participants=participants)
     event.update(event_meta.__dict__, Query().id == event_id)
     return event_meta
+
+# Helper Functions
+def exclude_fields(docs, *fields):
+    return [
+        {k: v for k, v in doc.items() if k not in fields}
+        for doc in docs
+    ]
+
+def project_count(effect):
+    if effect in ["increase", "inc", "i"]:
+        total = stats.all()[0]['project_index']
+        stats.update({'project_count': get_count(project), "project_index": int(total) + 1})
+
+    elif effect in ["decrease", "dec", "d"]:
+        stats.update({'project_count': get_count(project) - 1})
+
+def event_count(effect):
+    if effect in ["increase", "inc", "i"]:
+        total = stats.all()[0]['event_index']
+        stats.update({'event_count': get_count(project), "event_index": int(total) + 1})
+
+    elif effect in ["decrease", "dec", "d"]:
+       stats.update({'event_count': get_count(event) - 1})
+
+def story_count(effect):
+    if effect in ["increase", "inc", "i"]:
+        total = stats.all()[0]['story_index']
+        stats.update({'story_count': get_count(project), "story_index": int(total) + 1})
+
+    elif effect in ["decrease", "dec", "d"]:
+        stats.update({'story_count': get_count(story) - 1})
+
+def get_count(table):
+    return len(table.all())
+
+def get_all_stats():
+    return stats.all()
+
+def id_generator(prefix, table):
+    rows = str (get_count(table) + 1)
+    return prefix + ("0"*(4-len(rows)) + rows)
