@@ -7,29 +7,48 @@ const SegmentUpload = ({setSegments}) => {
     const [segment,setSegment] = useState("");
     const [analysis, setAnalysis] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [segmentTitle, setSegmentTitle] = useState("");
+    const [loadingProgress, setLoadingProgress] = useState({
+        percent:0,
+        step: "1/3",
+        subText: "NER progress: 0%",
+        eta: "calculating…"
+    })
 
+    
     const handleSubmit = async(e) => {
         e.preventDefault();
 
         if (!segment.trim()) return;
 
         setLoading(true); // show the loading overlayyy
+
         try {
             //load backend
             const result = await extractEntities(segment);
-            setAnalysis(result);
 
-            // Add new segment to app level state
-            setSegments(prev => [...prev, {
+            const newSegment = {
                 id: Date.now(),
-                title: `Segment ${prev.length + 1}`,
-                summary: result.summary,
-                text: segment,
-                entities: result.entities
-            }])
+                title: segmentTitle.trim() || `Segment ${Date.now()}`, // inputted title or fallback title
+                summary:result.summary,
+                text:segment,
+                entities:result.entities
+            }
+
+            // Save it to global state
+            setSegments(prev => [...prev, newSegment]);
+
+            // Attach segmentId to analysis
+            setAnalysis({
+                ...result,
+                segmentId: newSegment.id
+            });
+
         } catch(error){
             console.error(error);
         } finally {
+            setSegmentTitle("");
+            setSegment("");
             setLoading(false); // hide the overlay
         }
 
@@ -40,7 +59,7 @@ const SegmentUpload = ({setSegments}) => {
         setAnalysis(prev => ({
             ...prev,
             entities: prev.entities.map(e => {
-                if (e.id !== entityId) return e; // leave other entities unchanged
+                if (e.id !== entityId) return e;
 
                 return {
                     ...e,
@@ -50,6 +69,27 @@ const SegmentUpload = ({setSegments}) => {
                 };
             })
         }));
+
+        // update the correct segment
+        setSegments(prev =>
+            prev.map(seg => {
+                if (seg.id !== analysis.segmentId) return seg;
+
+                return {
+                    ...seg,
+                    entities: seg.entities.map(e => {
+                        if (e.id !== entityId) return e;
+
+                        return{
+                            ...e,
+                            facts: e.facts.map(f => 
+                                f.id === factId ? {...f,accepted:true} : f
+                            )
+                        }
+                    })
+                }
+            })
+        )
     };
 
     const handleReject = (entityId, factId) => {
@@ -66,16 +106,40 @@ const SegmentUpload = ({setSegments}) => {
                 };
             })
         }));
+
+        // update the correct segment
+        setSegments(prev =>
+            prev.map(seg => {
+                if (seg.id !== analysis.segmentId) return seg;
+
+                return {
+                    ...seg,
+                    entities: seg.entities.map(e => {
+                        if (e.id !== entityId) return e;
+
+                        return {
+                            ...e,
+                            facts: e.facts.map(f =>
+                                f.id === factId ? { ...f, accepted: false } : f
+                            )
+                        };
+                    })
+                };
+            })
+        );
     };
 
     
   return (
     <>
     {/* loading overlay appears if segment is loading */}
-    {loading && <LoadingOverlay/>}
+    {loading && <LoadingOverlay {...loadingProgress} />}
 
     <form className='segmentUpload' onSubmit={handleSubmit}>
         <label htmlFor='userSegment'>Submit your Story Segment:</label>
+
+        <label htmlFor='segmentTitle'>Segment Title:</label>
+        <input id='segmentTitle' type='text' value={segmentTitle} onChange={(e)=> setSegmentTitle(e.target.value)} placeholder='Ex: Chapter 1' maxLength={150}/>
 
         <textarea id='userSegment' 
                 value={segment} 
