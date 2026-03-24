@@ -1,0 +1,232 @@
+{
+  "entities": [
+    {
+      "id": "ent_000001",
+      "entityType": "location",
+      "name": "Netherfield Park",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Netherfield Park is available for rent.",
+          "sourceText": "Bennet,” said his lady to him one day, “have you heard that Netherfield Park is let at last?",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 393,
+            "end": 485
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9571544528007507
+    },
+    {
+      "id": "ent_000002",
+      "entityType": "character",
+      "name": "Bennet",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Bennet did not reply.",
+          "sourceText": "Bennet replied that he had not.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 492,
+            "end": 523
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Bennet did not respond.",
+          "sourceText": "Bennet made no answer.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 623,
+            "end": 645
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Bennet's wife found him tiresome.",
+          "sourceText": "Bennet,” replied his wife, “how can you be so tiresome?",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 1450,
+            "end": 1505
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.8826428651809692
+    },
+    {
+      "id": "ent_000003",
+      "entityType": "location",
+      "name": "Netherfield",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Netherfield Park is available for rent.",
+          "sourceText": "Bennet,” said his lady to him one day, “have you heard that Netherfield Park is let at last?",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 393,
+            "end": 485
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9210004210472107
+    },
+    {
+      "id": "ent_000004",
+      "entityType": "location",
+      "name": "England",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "England is the northern country where the young man with large fortune came from.",
+          "sourceText": "Long says that Netherfield is taken by a young man of large fortune from the north of England; that he came down on Monday in a chaise and four to see the place, and was so much delighted with it that he agreed with Mr.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 847,
+            "end": 1066
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9990352392196655
+    },
+    {
+      "id": "ent_000005",
+      "entityType": "character",
+      "name": "Morris",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Morris is to take possession before Michaelmas.",
+          "sourceText": "Morris immediately; that he is to take possession before Michaelmas, and some of his servants are to be in the house by the end of next week.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 1067,
+            "end": 1208
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Some of Morris's servants are to be in the house by the end of next week.",
+          "sourceText": "Morris immediately; that he is to take possession before Michaelmas, and some of his servants are to be in the house by the end of next week.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 1067,
+            "end": 1208
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.8896565437316895
+    },
+    {
+      "id": "ent_000006",
+      "entityType": "character",
+      "name": "Bingley",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Bingley will be glad to see you.",
+          "sourceText": "Bingley will be very glad to see you; and I will send a few lines by you to assure him of my hearty consent to his marrying whichever he chooses of the girls—though I must throw in a good word for my little Lizzy.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 2765,
+            "end": 2978
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Bingley will marry whichever girl he chooses.",
+          "sourceText": "Bingley will be very glad to see you; and I will send a few lines by you to assure him of my hearty consent to his marrying whichever he chooses of the girls—though I must throw in a good word for my little Lizzy.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 2765,
+            "end": 2978
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.8599053621292114
+    },
+    {
+      "id": "ent_000007",
+      "entityType": "character",
+      "name": "Bennet replied",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Bennet did not reply.",
+          "sourceText": "Bennet replied that he had not.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 492,
+            "end": 523
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Bennet's wife disagreed with Bennet",
+          "sourceText": "Bennet,” replied his wife, “how can you be so tiresome?",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 1450,
+            "end": 1505
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Bennet is a male.",
+          "sourceText": "”\n\n“They have none of them much to recommend them,” replied he: “they are all silly and ignorant like other girls; but Lizzy has something more of quickness than her sisters.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 3193,
+            "end": 3367
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9
+    }
+  ],
+  "count": 7
+}

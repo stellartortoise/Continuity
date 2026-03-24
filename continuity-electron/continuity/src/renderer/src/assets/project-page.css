@@ -46,7 +46,25 @@
         0 0 10px var(--cont-mid-blue),
         0 0 20px var(--cont-light-blue);
     z-index: 1;
-    top: 50%;
+    top: 25%;
+    transform: translateY(-50%);
+    width: 100%;
+    align-items: center;
+}
+.hero-overlay h2 {
+    font-size: 2rem;
+    position: relative;
+    color: white;
+    font-weight: 400;
+    font-style: normal;
+    font-family: var(--cont-title-font);
+    text-align: center;
+    text-shadow:
+        2px 2px 4px rgba(0, 0, 0, 0.7),
+        0 0 10px var(--cont-mid-blue),
+        0 0 20px var(--cont-light-blue);
+    z-index: 1;
+    top: 25%;
     transform: translateY(-50%);
     width: 100%;
 }
@@ -300,4 +318,46 @@ textarea {
 .fact-actions button:not(:disabled):hover {
     background-color: var(--cont-light-blue);
     cursor: pointer;
+}
+
+
+/* loading card*/
+
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.loading-card {
+    background: white;
+    padding: 2rem;
+    border-radius: 12px;
+    width: 350px;
+    max-width: 90%;
+    text-align: center;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.progress-wrap {
+    width: 100%;
+    height: 20px;
+    background: #eee;
+    border-radius: 10px;
+    margin: 1rem 0;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    width: 0%;
+    background: var(--cont-mid-blue);
+    transition: width 0.3s ease;
 }

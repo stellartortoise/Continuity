@@ -1,0 +1,381 @@
+{
+  "entities": [
+    {
+      "id": "ent_000001",
+      "entityType": "character",
+      "name": "William Shakespeare",
+      "aliases": [
+        "Shakespeare"
+      ],
+      "facts": [
+        {
+          "fact": "Shakespeare wrote in the English language.",
+          "sourceText": "Shakespeare remains arguably the most influential writer in the English language, and his works continue to be studied and reinterpreted.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 583,
+            "end": 720
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "William Shakespeare was born and raised in Stratford-upon-Avon, Warwickshire.",
+          "sourceText": "Shakespeare was born and raised in Stratford-upon-Avon, Warwickshire.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 722,
+            "end": 791
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Shakespeare's private life has not been extensively documented.",
+          "sourceText": "Few records of Shakespeare's private life survive; this has stimulated considerable speculation about such matters as his physical appearance, his sexuality, his religious beliefs and even certain fringe theories as to whether the works attributed to him were written by others.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 1280,
+            "end": 1558
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 2,
+      "confidence": 0.9991998672485352
+    },
+    {
+      "id": "ent_000002",
+      "entityType": "concept",
+      "name": "English",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "English was a playwright",
+          "sourceText": "23 April 1564 – 23 April 1616) was an English playwright, poet and actor.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 24,
+            "end": 97
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "English was a poet",
+          "sourceText": "23 April 1564 – 23 April 1616) was an English playwright, poet and actor.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 24,
+            "end": 97
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "English was an actor",
+          "sourceText": "23 April 1564 – 23 April 1616) was an English playwright, poet and actor.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 24,
+            "end": 97
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 5,
+      "confidence": 0.9997156262397766
+    },
+    {
+      "id": "ent_000003",
+      "entityType": "location",
+      "name": "England",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "England is often referred to as the national poet's homeland.",
+          "sourceText": "He is often called England's national poet and the \"Bard of Avon\" or simply \"the Bard\".",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 206,
+            "end": 293
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9997655749320984
+    },
+    {
+      "id": "ent_000005",
+      "entityType": "location",
+      "name": "Stratford-upon-Avon",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Shakespeare was born in Stratford-upon-Avon.",
+          "sourceText": "Shakespeare was born and raised in Stratford-upon-Avon, Warwickshire.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 722,
+            "end": 791
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Shakespeare was raised in Stratford-upon-Avon.",
+          "sourceText": "Shakespeare was born and raised in Stratford-upon-Avon, Warwickshire.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 722,
+            "end": 791
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9923799633979797
+    },
+    {
+      "id": "ent_000006",
+      "entityType": "location",
+      "name": "Warwickshire",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Warwickshire is the location of Stratford-upon-Avon.",
+          "sourceText": "Shakespeare was born and raised in Stratford-upon-Avon, Warwickshire.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 722,
+            "end": 791
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9991989731788635
+    },
+    {
+      "id": "ent_000007",
+      "entityType": "character",
+      "name": "Anne Hathaway",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Anne Hathaway married a man at the age of 18.",
+          "sourceText": "At the age of 18, he married Anne Hathaway, with whom he had three children: Susanna, and twins Hamnet and Judith.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 792,
+            "end": 906
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Anne Hathaway had three children with the man.",
+          "sourceText": "At the age of 18, he married Anne Hathaway, with whom he had three children: Susanna, and twins Hamnet and Judith.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 792,
+            "end": 906
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9920609593391418
+    },
+    {
+      "id": "ent_000008",
+      "entityType": "character",
+      "name": "Judith",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Judith was one of the children born to Anne Hathaway and the speaker.",
+          "sourceText": "At the age of 18, he married Anne Hathaway, with whom he had three children: Susanna, and twins Hamnet and Judith.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 792,
+            "end": 906
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9933585524559021
+    },
+    {
+      "id": "ent_000009",
+      "entityType": "location",
+      "name": "London",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "he began a successful career in London",
+          "sourceText": "Sometime between 1585 and 1592 he began a successful career in London as an actor, writer, and part-owner (\"sharer\") of a playing company called the Lord Chamberlain's Men, later known as the King's Men after the ascension of King James VI of Scotland to the English throne.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 907,
+            "end": 1181
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "he was an actor, writer, and part-owner of a playing company",
+          "sourceText": "Sometime between 1585 and 1592 he began a successful career in London as an actor, writer, and part-owner (\"sharer\") of a playing company called the Lord Chamberlain's Men, later known as the King's Men after the ascension of King James VI of Scotland to the English throne.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 907,
+            "end": 1181
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.999548614025116
+    },
+    {
+      "id": "ent_000010",
+      "entityType": "organization",
+      "name": "Lord Chamberlain Men",
+      "aliases": [],
+      "facts": [],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.8538012504577637
+    },
+    {
+      "id": "ent_000011",
+      "entityType": "organization",
+      "name": "King Men",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "King Men later became known as the King's Men.",
+          "sourceText": "Sometime between 1585 and 1592 he began a successful career in London as an actor, writer, and part-owner (\"sharer\") of a playing company called the Lord Chamberlain's Men, later known as the King's Men after the ascension of King James VI of Scotland to the English throne.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 907,
+            "end": 1181
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.868671178817749
+    },
+    {
+      "id": "ent_000012",
+      "entityType": "location",
+      "name": "Scotland",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Scotland's King James VI ascended to the English throne in 1567.",
+          "sourceText": "Sometime between 1585 and 1592 he began a successful career in London as an actor, writer, and part-owner (\"sharer\") of a playing company called the Lord Chamberlain's Men, later known as the King's Men after the ascension of King James VI of Scotland to the English throne.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 907,
+            "end": 1181
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9995222091674805
+    },
+    {
+      "id": "ent_000013",
+      "entityType": "location",
+      "name": "Stratford",
+      "aliases": [],
+      "facts": [
+        {
+          "fact": "Shakespeare was born in Stratford-upon-Avon.",
+          "sourceText": "Shakespeare was born and raised in Stratford-upon-Avon, Warwickshire.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 722,
+            "end": 791
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Shakespeare was raised in Stratford-upon-Avon.",
+          "sourceText": "Shakespeare was born and raised in Stratford-upon-Avon, Warwickshire.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 722,
+            "end": 791
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        },
+        {
+          "fact": "Stratford was the place where a person retired at age 49.",
+          "sourceText": "At age 49 (around 1613) he appears to have retired to Stratford, where he died three years later.",
+          "evidence": {
+            "timeId": "t_001",
+            "start": 1182,
+            "end": 1279
+          },
+          "confidence": 0.8,
+          "method": "llm"
+        }
+      ],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.9971520900726318
+    },
+    {
+      "id": "ent_000014",
+      "entityType": "character",
+      "name": "Henry",
+      "aliases": [],
+      "facts": [],
+      "firstMentionedAt": "t_001",
+      "lastUpdatedAt": "t_001",
+      "version": 1,
+      "confidence": 0.8936347365379333
+    }
+  ],
+  "count": 13
+}
