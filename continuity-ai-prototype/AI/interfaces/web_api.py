@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from models.ner_extractor import HybridNERExtractor
 from models.fact_extractor import FactExtractor
 from config.settings import EXPORT_JSON_DIR
+from database.vector_db import VectorDB
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,21 @@ class ExtractRequest(BaseModel):
 
 class ValidateFactsRequest(BaseModel):
     entities: List[Dict[str, Any]]
+
+
+class CanonFact(BaseModel):
+    id: str
+    entity_id: Optional[str] = None
+    story_id: Optional[str] = None
+    fact: str
+    sourceText: Optional[str] = None
+    evidence: Optional[Dict[str, Any]] = None
+
+
+class CanonSyncRequest(BaseModel):
+    project_id: str
+    approved_facts: List[CanonFact] = []
+    rejected_fact_ids: List[str] = []
 
 # ---------------- In-memory job store ----------------
 JOBS: Dict[str, Dict[str, Any]] = {}
@@ -45,6 +61,7 @@ JOBS: Dict[str, Dict[str, Any]] = {}
 def create_app(
     ner_extractor: HybridNERExtractor,
     fact_extractor: Optional[FactExtractor] = None,
+    vector_db: Optional[VectorDB] = None,
 ) -> FastAPI:
     app = FastAPI(title="Entity Extraction API", version="1.2.0")
 
@@ -128,6 +145,48 @@ def create_app(
         except Exception as e:
             logger.error(f"Fact validation error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
+
+    @app.post("/canon/sync")
+    async def canon_sync(req: CanonSyncRequest) -> Dict[str, Any]:
+        if not vector_db:
+            raise HTTPException(status_code=503, detail="Vector DB not available")
+
+        approved_ids = [f"fact_{f.id}" for f in req.approved_facts if f.id]
+        rejected_ids = [f"fact_{fid}" for fid in req.rejected_fact_ids if fid]
+
+        all_ids = sorted(set(approved_ids + rejected_ids))
+        if all_ids:
+            try:
+                vector_db.delete_documents(all_ids)
+            except Exception:
+                logger.debug("Delete step skipped or partial during canon sync", exc_info=True)
+
+        docs = [f.fact for f in req.approved_facts if f.fact]
+        if docs:
+            metadata = [
+                {
+                    "project_id": req.project_id,
+                    "fact_id": f.id,
+                    "entity_id": f.entity_id,
+                    "story_id": f.story_id,
+                    "source_text": f.sourceText,
+                }
+                for f in req.approved_facts
+                if f.fact
+            ]
+            ids = [f"fact_{f.id}" for f in req.approved_facts if f.fact]
+            try:
+                vector_db.add_documents(documents=docs, metadata=metadata, ids=ids)
+            except Exception as ex:
+                logger.error("Canon sync add failed: %s", ex, exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Canon sync failed: {type(ex).__name__}")
+
+        return {
+            "project_id": req.project_id,
+            "approvedCount": len(docs),
+            "rejectedCount": len(rejected_ids),
+            "message": "Canon sync completed",
+        }
 
     return app
 

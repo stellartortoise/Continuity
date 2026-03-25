@@ -9,6 +9,7 @@ from utils.logger import setup_logging
 from config.settings import API_HOST, API_PORT, EXPORT_JSON_DIR, FACT_MODEL_PATH
 from models.fact_extractor import FactExtractor
 from models.llm_manager import LLMManager
+from database.vector_db import VectorDB
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -23,12 +24,14 @@ async def run_web_api(ner_extractor: HybridNERExtractor):
         llm=llm,
         use_llm=True,
         max_facts_per_entity=3,
-        rules_fallback=False,
+        rules_fallback=True,
         temperature=0.2,
         max_tokens=120,
     )
 
-    app = create_app(ner_extractor, fact_extractor=fact_extractor)
+    vector_db = VectorDB(collection_name="canon_facts")
+
+    app = create_app(ner_extractor, fact_extractor=fact_extractor, vector_db=vector_db)
     logger.info("Starting Entity Extraction API on %s:%s", API_HOST, API_PORT)
 
     def run_server():

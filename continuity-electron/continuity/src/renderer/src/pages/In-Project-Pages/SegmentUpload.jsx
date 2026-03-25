@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { extractEntities } from '../../services/aiService';
 import EntityAnalysisCard from '../../components/ProjectLayout/EntityAnalysisCard';
 import LoadingOverlay from '../../components/ProjectLayout/LoadingOverlay';
+import projectService from '../../services/projectService';
 
 const SegmentUpload = ({setSegments}) => {
     const [segment,setSegment] = useState("");
@@ -67,6 +68,9 @@ const SegmentUpload = ({setSegments}) => {
 
         if (!segment.trim()) return;
 
+        setError(null);
+        setSubmitError(null);
+        setSubmitMessage(null);
         setLoading(true); // show the loading overlayyy
 
         try {
@@ -92,6 +96,7 @@ const SegmentUpload = ({setSegments}) => {
 
         } catch(error){
             console.error(error);
+            setError(error.message || "Failed to upload segment");
         } finally {
             setProgress(100);
             setStep("3/3");
@@ -220,7 +225,20 @@ const SegmentUpload = ({setSegments}) => {
 
     {/* Only render below if analysis exists */}
         {analysis && (
-            <div className='segment-summary' style={{padding:"2rem", backgroundColor:"red",margin:"5px", borderRadius:"8px"} }>{analysis.summary}</div>
+            <div className='segment-summary' style={{padding:"2rem", backgroundColor:"red",margin:"5px", borderRadius:"8px" }}>
+                <div>{analysis.summary}</div>
+                <div style={{marginTop: "0.5rem"}}>Pending facts: {analysis.pendingFactsCount || 0} | Conflicts: {analysis.conflictsDetected || 0}</div>
+                <div style={{marginTop: "0.75rem"}}>
+                    <button
+                        type='button'
+                        onClick={handleSubmitReview}
+                        disabled={isSubmittingReview || countPendingFacts() > 0 || !analysis.reviewSessionId}
+                    >
+                        {isSubmittingReview ? "Submitting..." : "Submit Canon Decisions"}
+                    </button>
+                    {countPendingFacts() > 0 && <span style={{marginLeft: "0.5rem"}}>Resolve all facts before submit.</span>}
+                </div>
+            </div>
         )}
         {analysis && analysis.entities.map(entity => (
             <EntityAnalysisCard
