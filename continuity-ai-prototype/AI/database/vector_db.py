@@ -68,6 +68,24 @@ class VectorDB:
             logger.error(f"Error adding documents: {e}")
             raise
 
+    def upsert_documents(
+        self,
+        documents: List[str],
+        metadata: List[Dict[str, Any]] = None,
+        ids: List[str] = None,
+    ) -> None:
+        """Upsert by deleting existing IDs before add."""
+        if not documents:
+            return
+        ids = ids or [f"doc_{i}" for i in range(len(documents))]
+        if ids:
+            try:
+                self.collection.delete(ids=ids)
+            except Exception:
+                # Missing IDs are fine; add will still proceed.
+                pass
+        self.add_documents(documents=documents, metadata=metadata, ids=ids)
+
     def search(self, query: str, top_k: int = TOP_K_RESULTS) -> List[Dict[str, Any]]:
         """
         Search for documents similar to query.

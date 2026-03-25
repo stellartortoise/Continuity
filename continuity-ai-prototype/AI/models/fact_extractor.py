@@ -82,10 +82,17 @@ class FactExtractor:
 
             aliases = ent.get("aliases") or []
             mention_sents = self._find_mention_sentences(name, sentences, aliases)
+            logger.debug("Fact extraction: entity='%s' mentions=%d", name, len(mention_sents))
 
             facts: List[dict] = []
             for start, end, sent_text in mention_sents:
                 llm_facts = await self._llm_extract_facts_for_sentence(name, sent_text)
+                logger.debug(
+                    "Fact extraction: entity='%s' llm_facts=%d sentence='%s'",
+                    name,
+                    len(llm_facts),
+                    sent_text[:140],
+                )
                 for sf in llm_facts:
                     facts.append(
                         self._mk_fact(
@@ -117,6 +124,7 @@ class FactExtractor:
 
             # Apply fact validation only if auto-validation is enabled
             entity_facts = uniq[: self.max_facts_per_entity]
+            logger.debug("Fact extraction: entity='%s' final_facts=%d", name, len(entity_facts))
             if self.auto_validate_facts and self.fact_validator and len(entity_facts) > 1:
                 try:
                     entity_facts = self.fact_validator.validate_facts(entity_facts)
@@ -298,6 +306,54 @@ class FactExtractor:
             "confidence": round(float(confidence), 3),
             "method": method,
         }
+
+    def _facts_from_sentence_rules(
+        self,
+        name: str,
+        sentence: Sentence,
+        time_id: str,
+        aliases: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Rule fallback when LLM extraction is empty or unavailable.
+
+        Strategy: if the sentence mentions the entity and contains a verb-like token,
+        treat the sentence itself as one factual statement.
+        """
+        s_start, s_end, sent_text = sentence
+        if not sent_text.strip():
+            return []
+
+        # Ensure sentence actually mentions the target entity (or alias/surname).
+        if not self._name_patterns(name, aliases).search(sent_text):
+            return []
+
+        words = sent_text.lower().split()
+        has_verb = any(
+            w in {
+                "is", "was", "were", "are", "has", "had", "have", "been",
+                "became", "served", "worked", "lived", "died", "born", "held",
+                "led", "said", "asked", "replied", "felt", "knew",
+            }
+            for w in words
+        )
+        if not has_verb:
+            return []
+
+        text = sent_text.strip()
+        if text[-1] not in ".!?":
+            text = text + "."
+
+        return [
+            self._mk_fact(
+                text,
+                sent_text,
+                s_start,
+                s_end,
+                time_id,
+                confidence=0.62,
+                method="rules",
+            )
+        ]
 
     def _safe_json(self, text: str) -> Dict[str, Any]:
         if not text:

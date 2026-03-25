@@ -1,31 +1,46 @@
-const STORAGE_KEY="currentProject"
+const STORAGE_KEY = "currentProjectId";
+const API_BASE = "http://localhost:8001";
 
 const projectService = {
-  async createProject(name) {
-    const project = {
-        id: crypto.randomUUID(),
-        name,
-        createdAt: new Date().toISOString(),
-        lastOpened: new Date().toISOString(),
-        recentActivity:[]
+  async createProject(name, description = "") {
+    const params = new URLSearchParams({ name, description });
+    const res = await fetch(`${API_BASE}/projects?${params.toString()}`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to create project (${res.status})`);
     }
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(project))
+    const project = await res.json();
+    localStorage.setItem(STORAGE_KEY, project.id);
     return project;
   },
 
   async loadProject() {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    return stored ? JSON.parse(stored) : null;
+    const projectId = localStorage.getItem(STORAGE_KEY);
+    if (!projectId) {
+      return null;
+    }
+
+    const params = new URLSearchParams({ id: projectId });
+    const res = await fetch(`${API_BASE}/projects?${params.toString()}`);
+    if (!res.ok) {
+      return null;
+    }
+    return res.json();
   },
 
   async saveProject(project) {
-    project.lastOpened = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(project))
+    const params = new URLSearchParams({
+      name: project.name || "Untitled",
+      description: project.description || "",
+    });
+    await fetch(`${API_BASE}/projects/${project.id}?${params.toString()}`, { method: "PUT" });
+    localStorage.setItem(STORAGE_KEY, project.id);
   },
 
   async clearProject() {
-    localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem(STORAGE_KEY);
   }
 }
 
