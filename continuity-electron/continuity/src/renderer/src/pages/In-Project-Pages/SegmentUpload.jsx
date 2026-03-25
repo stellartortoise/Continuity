@@ -8,18 +8,15 @@ const SegmentUpload = ({setSegments}) => {
     const [segment,setSegment] = useState("");
     const [analysis, setAnalysis] = useState(null);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
-    const [submitError, setSubmitError] = useState(null);
-    const [submitMessage, setSubmitMessage] = useState(null);
-    const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+    const [segmentTitle, setSegmentTitle] = useState("");
+    const [loadingProgress, setLoadingProgress] = useState({
+        percent:0,
+        step: "1/3",
+        subText: "NER progress: 0%",
+        eta: "calculating…"
+    })
 
-    const countPendingFacts = () => {
-        if (!analysis) return 0;
-        return analysis.entities.reduce((count, entity) => {
-            return count + entity.facts.filter(f => f.accepted === null).length;
-        }, 0);
-    };
-
+    
     const handleSubmit = async(e) => {
         e.preventDefault();
 
@@ -29,109 +26,125 @@ const SegmentUpload = ({setSegments}) => {
         setSubmitError(null);
         setSubmitMessage(null);
         setLoading(true); // show the loading overlayyy
+
         try {
-            const activeProject = await projectService.loadProject();
-            if (!activeProject?.id) {
-                throw new Error("No active project selected");
+            //load backend
+            const result = await extractEntities(segment);
+
+            const newSegment = {
+                id: Date.now(),
+                title: segmentTitle.trim() || `Segment ${Date.now()}`, // inputted title or fallback title
+                summary:result.summary,
+                text:segment,
+                entities:result.entities
             }
 
-            const result = await uploadSegment(activeProject.id, segment);
-            setAnalysis(result);
+            // Save it to global state
+            setSegments(prev => [...prev, newSegment]);
 
-            // Add new segment to app level state
-            setSegments(prev => [...prev, {
-                id: result.story?.id || Date.now(),
-                title: result.story?.title || `Segment ${prev.length + 1}`,
-                summary: result.summary,
-                text: segment,
-                entities: result.entities,
-                reviewSessionId: result.reviewSessionId,
-                pendingFactsCount: result.pendingFactsCount,
-                conflictsDetected: result.conflictsDetected,
-            }])
+            // Attach segmentId to analysis
+            setAnalysis({
+                ...result,
+                segmentId: newSegment.id
+            });
+
         } catch(error){
             console.error(error);
             setError(error.message || "Failed to upload segment");
         } finally {
+            setSegmentTitle("");
+            setSegment("");
             setLoading(false); // hide the overlay
         }
 
 
     }
 
-    const handleAccept = async (entityId, factId) => {
-        setSubmitError(null);
-        try {
-            await reviewFact(factId, "approved");
-            setAnalysis(prev => ({
-                ...prev,
-                entities: prev.entities.map(e => {
-                    if (e.id !== entityId) return e; // leave other entities unchanged
+    const handleAccept = (entityId, factId) => {
+        setAnalysis(prev => ({
+            ...prev,
+            entities: prev.entities.map(e => {
+                if (e.id !== entityId) return e;
 
-                    return {
-                        ...e,
-                        facts: e.facts.map(f =>
-                            f.id === factId ? { ...f, accepted: true, status: "approved" } : f
-                        )
-                    };
-                })
-            }));
-        } catch (err) {
-            setSubmitError(err.message || "Failed to approve fact");
-        }
+                return {
+                    ...e,
+                    facts: e.facts.map(f =>
+                        f.id === factId ? { ...f, accepted: true } : f
+                    )
+                };
+            })
+        }));
+
+        // update the correct segment
+        setSegments(prev =>
+            prev.map(seg => {
+                if (seg.id !== analysis.segmentId) return seg;
+
+                return {
+                    ...seg,
+                    entities: seg.entities.map(e => {
+                        if (e.id !== entityId) return e;
+
+                        return{
+                            ...e,
+                            facts: e.facts.map(f => 
+                                f.id === factId ? {...f,accepted:true} : f
+                            )
+                        }
+                    })
+                }
+            })
+        )
     };
 
-    const handleReject = async (entityId, factId) => {
-        setSubmitError(null);
-        try {
-            await reviewFact(factId, "rejected");
-            setAnalysis(prev => ({
-                ...prev,
-                entities: prev.entities.map(e => {
-                    if (e.id !== entityId) return e;
+    const handleReject = (entityId, factId) => {
+        setAnalysis(prev => ({
+            ...prev,
+            entities: prev.entities.map(e => {
+                if (e.id !== entityId) return e;
 
-                    return {
-                        ...e,
-                        facts: e.facts.map(f =>
-                            f.id === factId ? { ...f, accepted: false, status: "rejected" } : f
-                        )
-                    };
-                })
-            }));
-        } catch (err) {
-            setSubmitError(err.message || "Failed to reject fact");
-        }
-    };
+                return {
+                    ...e,
+                    facts: e.facts.map(f =>
+                        f.id === factId ? { ...f, accepted: false } : f
+                    )
+                };
+            })
+        }));
 
-    const handleSubmitReview = async () => {
-        if (!analysis?.reviewSessionId) {
-            return;
-        }
+        // update the correct segment
+        setSegments(prev =>
+            prev.map(seg => {
+                if (seg.id !== analysis.segmentId) return seg;
 
-        setSubmitError(null);
-        setSubmitMessage(null);
-        setIsSubmittingReview(true);
-        try {
-            const result = await submitReviewSession(analysis.reviewSessionId);
-            setSubmitMessage(result.message || "Review submitted");
-        } catch (err) {
-            setSubmitError(err.message || "Failed to submit review");
-        } finally {
-            setIsSubmittingReview(false);
-        }
+                return {
+                    ...seg,
+                    entities: seg.entities.map(e => {
+                        if (e.id !== entityId) return e;
+
+                        return {
+                            ...e,
+                            facts: e.facts.map(f =>
+                                f.id === factId ? { ...f, accepted: false } : f
+                            )
+                        };
+                    })
+                };
+            })
+        );
     };
 
     
   return (
     <>
     {/* loading overlay appears if segment is loading */}
-    {loading && <LoadingOverlay/>}
-    {error && <div className='segment-summary' style={{padding:"1rem", backgroundColor:"#511", margin:"5px", borderRadius:"8px", color:"#fff"}}>{error}</div>}
-    {submitError && <div className='segment-summary' style={{padding:"1rem", backgroundColor:"#511", margin:"5px", borderRadius:"8px", color:"#fff"}}>{submitError}</div>}
-    {submitMessage && <div className='segment-summary' style={{padding:"1rem", backgroundColor:"#154", margin:"5px", borderRadius:"8px", color:"#fff"}}>{submitMessage}</div>}
+    {loading && <LoadingOverlay {...loadingProgress} />}
 
     <form className='segmentUpload' onSubmit={handleSubmit}>
         <label htmlFor='userSegment'>Submit your Story Segment:</label>
+
+        <label htmlFor='segmentTitle'>Segment Title:</label>
+        <input id='segmentTitle' type='text' value={segmentTitle} onChange={(e)=> setSegmentTitle(e.target.value)} placeholder='Ex: Chapter 1' maxLength={150}/>
 
         <textarea id='userSegment' 
                 value={segment} 
