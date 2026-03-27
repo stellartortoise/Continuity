@@ -84,3 +84,63 @@ export async function submitReviewSession(sessionId, submittedBy) {
     }
     return res.json();
 }
+
+export async function startSegmentExtraction(projectId, text, title) {
+    const res = await fetch(`${API_BASE}/projects/${projectId}/segments/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: text, title }),
+    });
+
+    if (!res.ok) {
+        let message = `Segment extraction start failed (${res.status})`;
+        try {
+            const data = await res.json();
+            message = data.detail || message;
+        } catch {
+            // Ignore parse errors and use generic message.
+        }
+        throw new Error(message);
+    }
+
+    return res.json();
+}
+
+export async function getSegmentExtractionStatus(jobId) {
+    const res = await fetch(`${API_BASE}/segments/jobs/${jobId}/status`, {
+        headers: { "Cache-Control": "no-store" },
+    });
+
+    if (!res.ok) {
+        let message = `Segment extraction status failed (${res.status})`;
+        try {
+            const data = await res.json();
+            message = data.detail || message;
+        } catch {
+            // Ignore parse errors and use generic message.
+        }
+        throw new Error(message);
+    }
+
+    return res.json();
+}
+
+export async function getSegmentExtractionResult(jobId, fallbackText) {
+    const res = await fetch(`${API_BASE}/segments/jobs/${jobId}/result`, {
+        headers: { "Cache-Control": "no-store" },
+    });
+
+    if (!res.ok) {
+        let message = `Segment extraction result failed (${res.status})`;
+        try {
+            const data = await res.json();
+            message = data.detail || message;
+        } catch {
+            // Ignore parse errors and use generic message.
+        }
+        throw new Error(message);
+    }
+
+    const data = await res.json();
+    return normalizeResult(data, fallbackText);
+}

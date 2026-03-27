@@ -13,6 +13,7 @@ import Document_Controls
 app = FastAPI()
 controller = Document_Controls
 API_BASE = "http://localhost:8002"
+SEGMENT_JOBS: Dict[str, Dict[str, Any]] = {}
 
 
 class SegmentRequest(BaseModel):
@@ -97,6 +98,144 @@ async def upload_segment(project_id: str, req: SegmentRequest):
         "conflictsDetected": extraction["conflictsDetected"],
         "reviewSessionId": extraction["reviewSessionId"],
     }
+
+
+@app.post("/projects/{project_id}/segments/start")
+async def upload_segment_start(project_id: str, req: SegmentRequest):
+    project = controller.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    count = len(controller.get_all_stories(project_id=project_id)) + 1
+    title = req.title or f"Segment {count}"
+    created_story = controller.create_story(project_id=project_id, title=title, body=req.body)
+
+    payload = {
+        "text": created_story.get("body", ""),
+        "time_id": req.time_id or created_story["id"],
+    }
+    start = requests.post(f"{API_BASE}/entities/extract/start", json=payload, timeout=30)
+    if start.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"AI start failed: {start.text}")
+
+    job_id = start.json().get("jobId")
+    if not job_id:
+        raise HTTPException(status_code=502, detail="AI service did not return jobId")
+
+    SEGMENT_JOBS[job_id] = {
+        "story_id": created_story["id"],
+        "project_id": project_id,
+        "status": "running",
+        "result": None,
+        "error": None,
+        "created_at": time.time(),
+    }
+
+    return {
+        "jobId": job_id,
+        "storyId": created_story["id"],
+        "message": "Segment created and extraction started",
+    }
+
+
+@app.get("/segments/jobs/{job_id}/status")
+async def get_segment_job_status(job_id: str):
+    job = SEGMENT_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.get("status") == "done":
+        return {
+            "status": "done",
+            "phase": "complete",
+            "progress": 1.0,
+            "message": "Entity extraction and persistence complete",
+            "processed": 0,
+            "total": 0,
+            "currentEntityName": None,
+        }
+
+    if job.get("status") == "error":
+        return {
+            "status": "error",
+            "phase": "error",
+            "progress": 0.0,
+            "message": job.get("error") or "Extraction failed",
+            "processed": 0,
+            "total": 0,
+            "currentEntityName": None,
+        }
+
+    status_res = requests.get(f"{API_BASE}/entities/status/{job_id}", timeout=30)
+    if status_res.status_code >= 400:
+        detail = f"AI status failed ({status_res.status_code})"
+        job["status"] = "error"
+        job["error"] = detail
+        raise HTTPException(status_code=502, detail=detail)
+
+    payload = status_res.json()
+    return {
+        "status": payload.get("status", "running"),
+        "phase": payload.get("phase", "working"),
+        "progress": payload.get("progress", 0.0),
+        "message": payload.get("message", "Working..."),
+        "processed": payload.get("processed", 0),
+        "total": payload.get("total", 0),
+        "currentEntityName": payload.get("currentEntityName"),
+    }
+
+
+@app.get("/segments/jobs/{job_id}/result")
+async def get_segment_job_result(job_id: str):
+    job = SEGMENT_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.get("result") is not None:
+        return job["result"]
+
+    story_id = job.get("story_id")
+    story = controller.get_story(story_id)
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    result_res = requests.get(f"{API_BASE}/entities/result/{job_id}", timeout=30)
+    if result_res.status_code == 202:
+        raise HTTPException(status_code=202, detail="Job not finished")
+    if result_res.status_code >= 400:
+        detail = f"AI result failed ({result_res.status_code})"
+        job["status"] = "error"
+        job["error"] = detail
+        raise HTTPException(status_code=502, detail=detail)
+
+    ai_payload = result_res.json()
+    persisted = controller.persist_extracted_entities(
+        project_id=story.get("project_id"),
+        story_id=story_id,
+        extracted_entities=ai_payload.get("entities", []),
+    )
+    conflicts = controller.get_project_conflicts(story.get("project_id"))
+    pending = sum(1 for e in persisted["entities"] for f in e.get("facts", []) if f.get("status") == "pending")
+    updated_story = controller.set_story_review_metadata(
+        story_id=story_id,
+        review_session_id=persisted["reviewSession"]["id"],
+        pending_facts_count=pending,
+        conflicts_detected=len(conflicts),
+    ) or story
+
+    response = {
+        "story": updated_story,
+        "entities": persisted["entities"],
+        "count": len(persisted["entities"]),
+        "pendingFactsCount": pending,
+        "conflictsDetected": len(conflicts),
+        "reviewSessionId": persisted["reviewSession"]["id"],
+        "exportPath": ai_payload.get("exportPath"),
+    }
+
+    job["status"] = "done"
+    job["result"] = response
+    return response
 
 
 @app.post("/stories/{story_id}/extract-entities")
