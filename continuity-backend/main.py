@@ -25,10 +25,40 @@ class FactDecisionRequest(BaseModel):
     status: str = Field(pattern="^(pending|approved|rejected)$")
     reviewed_by: Optional[str] = None
     decision_reason: Optional[str] = None
+    confirm_assignment: bool = False
+    confirm_low_quality: bool = False
+
+
+class FactEntityAssignmentRequest(BaseModel):
+    entity_id: str
 
 
 class ReviewSubmitRequest(BaseModel):
     submitted_by: Optional[str] = None
+
+
+class CanonEntityCreateRequest(BaseModel):
+    name: str
+    type: Optional[str] = None
+    aliases: Optional[List[str]] = None
+    description: Optional[str] = None
+    notes: Optional[str] = None
+    confidence: Optional[float] = None
+    status: Optional[str] = None
+
+
+class CanonEntityUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    aliases: Optional[List[str]] = None
+    description: Optional[str] = None
+    notes: Optional[str] = None
+    confidence: Optional[float] = None
+
+
+class CanonEntityMergeRequest(BaseModel):
+    source_entity_id: str
+    target_entity_id: str
 
 
 app.add_middleware(
@@ -119,9 +149,145 @@ async def get_project_conflicts(project_id: str):
     return {"conflicts": controller.get_project_conflicts(project_id)}
 
 
+@app.get("/stories/{story_id}/conflicts")
+async def get_story_conflicts(story_id: str, include_cross_story: bool = False):
+    return {"conflicts": controller.get_story_conflicts(story_id, include_cross_story=include_cross_story)}
+
+
 @app.get("/projects/{project_id}/canon-index")
 async def get_project_canon_index(project_id: str):
     return {"documents": controller.get_canon_index(project_id)}
+
+
+@app.get("/projects/{project_id}/canon/sync-status")
+async def get_project_canon_sync_status(project_id: str):
+    retried = _retry_sync_for_project(project_id)
+    sessions = controller.get_review_sessions_by_project(project_id)
+    pending = [s for s in sessions if s.get("syncStatus") == "pending"]
+    errored = [s for s in sessions if s.get("syncStatus") == "error"]
+    return {
+        "project_id": project_id,
+        "autoRetried": len(retried),
+        "totalSubmitted": len([s for s in sessions if s.get("status") == "submitted"]),
+        "pendingCount": len(pending),
+        "errorCount": len(errored),
+        "sessions": sessions[:20],
+    }
+
+
+@app.post("/projects/{project_id}/canon/resync-pending")
+async def retry_project_canon_sync(project_id: str):
+    results = _retry_sync_for_project(project_id)
+    success_count = len([row for row in results if row.get("ok")])
+
+    return {
+        "project_id": project_id,
+        "retryCount": len(results),
+        "successCount": success_count,
+        "results": results,
+    }
+
+
+def _retry_sync_for_project(project_id: str) -> List[Dict[str, Any]]:
+    retryable = controller.get_retryable_review_sessions(project_id)
+    results: List[Dict[str, Any]] = []
+    for session in retryable:
+        sync = _sync_canon_index_for_session(session)
+        controller.mark_review_session_sync_result(session["id"], ok=sync["ok"], message=sync["message"])
+        results.append(
+            {
+                "sessionId": session.get("id"),
+                "ok": sync["ok"],
+                "message": sync["message"],
+            }
+        )
+    return results
+
+
+@app.get("/projects/{project_id}/canon/entities")
+async def get_project_canon_entities(project_id: str, query: Optional[str] = None):
+    entities = controller.get_entities_by_project(project_id)
+    if query:
+        entities = controller.search_entities(project_id, query)
+    return {"entities": entities}
+
+
+@app.get("/projects/{project_id}/canon/suggestions")
+async def get_project_canon_suggestions(project_id: str):
+    return {"entities": controller.get_suggested_entities_by_project(project_id)}
+
+
+@app.post("/projects/{project_id}/canon/entities")
+async def create_project_canon_entity(project_id: str, req: CanonEntityCreateRequest):
+    try:
+        entity = controller.create_entity(
+            project_id,
+            {
+                "name": req.name,
+                "type": req.type,
+                "aliases": req.aliases or [],
+                "description": req.description,
+                "notes": req.notes,
+                "confidence": req.confidence if req.confidence is not None else 1.0,
+            },
+            status=req.status or "active",
+        )
+        return {"entity": entity}
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex)) from ex
+
+
+@app.post("/projects/{project_id}/canon/entities/{entity_id}/promote")
+async def promote_canon_entity(project_id: str, entity_id: str):
+    entity = controller.promote_entity(entity_id)
+    if not entity or entity.get("project_id") != project_id:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return {"entity": entity}
+
+
+@app.get("/entities/{entity_id}")
+async def get_canon_entity(entity_id: str):
+    entity = controller.get_entity(entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return entity
+
+
+@app.put("/entities/{entity_id}")
+async def update_canon_entity(entity_id: str, req: CanonEntityUpdateRequest):
+    updated = controller.update_entity(
+        entity_id,
+        {
+            "name": req.name,
+            "type": req.type,
+            "aliases": req.aliases,
+            "description": req.description,
+            "notes": req.notes,
+            "confidence": req.confidence,
+        },
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return {"entity": updated}
+
+
+@app.delete("/entities/{entity_id}")
+async def delete_canon_entity(entity_id: str):
+    deleted = controller.soft_delete_entity(entity_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return {"entity": deleted}
+
+
+@app.post("/projects/{project_id}/canon/entities/merge")
+async def merge_canon_entities(project_id: str, req: CanonEntityMergeRequest):
+    try:
+        merged = controller.merge_entities(project_id, req.source_entity_id, req.target_entity_id)
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex)) from ex
+    if not merged:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return {"entity": merged}
 
 
 @app.get("/entities/{entity_id}/facts")
@@ -137,12 +303,22 @@ async def review_fact(fact_id: str, req: FactDecisionRequest):
             status=req.status,
             reviewed_by=req.reviewed_by,
             decision_reason=req.decision_reason,
+            confirm_assignment=req.confirm_assignment,
+            confirm_low_quality=req.confirm_low_quality,
         )
     except ValueError as ex:
         raise HTTPException(status_code=400, detail=str(ex)) from ex
 
     if not updated:
         raise HTTPException(status_code=404, detail="Fact not found")
+    return updated
+
+
+@app.patch("/facts/{fact_id}/entity")
+async def assign_fact_entity(fact_id: str, req: FactEntityAssignmentRequest):
+    updated = controller.reassign_fact_entity(fact_id, req.entity_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Fact or entity not found")
     return updated
 
 
@@ -213,9 +389,17 @@ def _extract_and_persist(story_id: str, time_id: Optional[str] = None) -> Dict[s
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
 
+    canon_entities = [
+        entity
+        for entity in controller.get_entities_by_project(story.get("project_id"))
+        if entity.get("status") == "active"
+    ]
+
     payload = {
         "text": story.get("body", ""),
         "time_id": time_id or story_id,
+        "project_id": story.get("project_id"),
+        "canon_entities": canon_entities,
     }
     start = requests.post(f"{API_BASE}/entities/extract/start", json=payload, timeout=30)
     if start.status_code >= 400:
@@ -236,24 +420,80 @@ def _extract_and_persist(story_id: str, time_id: Optional[str] = None) -> Dict[s
         story_id=story_id,
         extracted_entities=ai_payload.get("entities", []),
     )
-    conflicts = controller.get_project_conflicts(story.get("project_id"))
+    story_conflicts = controller.get_story_conflicts(story_id, include_cross_story=False)
+    cross_story_conflicts = [
+        c for c in controller.get_story_conflicts(story_id, include_cross_story=True)
+        if c.get("conflictType") == "inter-story"
+    ]
     pending = sum(1 for e in persisted["entities"] for f in e.get("facts", []) if f.get("status") == "pending")
     updated_story = controller.set_story_review_metadata(
         story_id=story_id,
         review_session_id=persisted["reviewSession"]["id"],
         pending_facts_count=pending,
-        conflicts_detected=len(conflicts),
+        conflicts_detected=len(story_conflicts),
     ) or story
+
+    summary = _build_entity_summary(persisted["entities"], story_id)
 
     return {
         "story": updated_story,
         "entities": persisted["entities"],
+        "summary": summary,
         "count": len(persisted["entities"]),
         "pendingFactsCount": pending,
-        "conflictsDetected": len(conflicts),
+        "conflictsDetected": len(story_conflicts),
+        "crossStoryConflictsCount": len(cross_story_conflicts),
         "reviewSessionId": persisted["reviewSession"]["id"],
         "exportPath": ai_payload.get("exportPath"),
     }
+
+
+def _fact_section(entity_type: str, fact_text: str) -> str:
+    lower = (fact_text or "").lower()
+    if entity_type == "character":
+        if "eye" in lower or "hair" in lower or "height" in lower or "appearance" in lower:
+            return "Physical Traits"
+        if "waiting" in lower or "wants" in lower or "looking for" in lower or "goal" in lower:
+            return "Current Status / Motivation"
+        if "before" in lower or "used to" in lower or "many times" in lower or "history" in lower:
+            return "History / Backstory"
+        if " in " in lower or " at " in lower or "inside" in lower:
+            return "Current Location"
+    if entity_type == "location":
+        if "old" in lower or "dusty" in lower or "peeling" in lower or "ruined" in lower:
+            return "Age / Condition"
+        if "window" in lower or "booth" in lower or "door" in lower or "hall" in lower:
+            return "Architecture / Features"
+    if entity_type in {"event", "object"}:
+        return "Status"
+    return "Facts"
+
+
+def _build_entity_summary(entities: List[Dict[str, Any]], story_id: str) -> List[Dict[str, Any]]:
+    summary: List[Dict[str, Any]] = []
+    for ent in entities:
+        sections: Dict[str, List[str]] = {}
+        etype = ent.get("entityType") or ent.get("type") or "concept"
+        for f in ent.get("facts", []):
+            text = (f.get("fact") or "").strip()
+            if not text:
+                continue
+            sec = _fact_section(etype, text)
+            sections.setdefault(sec, []).append(text)
+
+        summary.append(
+            {
+                "storyId": story_id,
+                "entityId": ent.get("id"),
+                "entityName": ent.get("name"),
+                "entityType": etype,
+                "sections": [
+                    {"name": name, "facts": values}
+                    for name, values in sections.items()
+                ],
+            }
+        )
+    return summary
 
 
 def _sync_canon_index_for_session(session: Dict[str, Any]) -> Dict[str, Any]:

@@ -240,50 +240,351 @@ def modify_event(event_id: str, name: str, description: str, participants: List[
 
 
 # -------------- Entities + Facts -------------------#
-def upsert_entity(project_id: str, story_id: str, entity_payload: Dict[str, Any]) -> Dict[str, Any]:
+def _entity_status(doc: Dict[str, Any]) -> str:
+    return (doc.get("status") or "active").strip().lower()
+
+
+def _entity_type(payload: Dict[str, Any]) -> str:
+    return (payload.get("entityType") or payload.get("type") or "concept").strip()
+
+
+def _hydrate_entity(doc: Dict[str, Any]) -> Dict[str, Any]:
+    hydrated = dict(doc)
+    hydrated["status"] = _entity_status(hydrated)
+    hydrated["aliases"] = _safe_unique(list(hydrated.get("aliases", [])))
+    hydrated["story_ids"] = _safe_unique(list(hydrated.get("story_ids", [])))
+    hydrated["fact_ids"] = _safe_unique(list(hydrated.get("fact_ids", [])))
+    hydrated.setdefault("deleted_at", None)
+    hydrated.setdefault("merged_into", None)
+    hydrated.setdefault("redirect_to", None)
+    hydrated.setdefault("sync_status", "pending")
+    hydrated.setdefault("sync_message", None)
+    return hydrated
+
+
+def _normalized_aliases(entity_row: Dict[str, Any]) -> List[str]:
+    return [_normalize_name(alias) for alias in entity_row.get("aliases", []) or [] if alias]
+
+
+def _matches_entity_name(entity_row: Dict[str, Any], name: str) -> bool:
+    candidate = _normalize_name(name)
+    canonical = entity_row.get("normalized_name", "")
+    aliases = _normalized_aliases(entity_row)
+
+    if candidate == canonical or candidate in aliases:
+        return True
+
+    canonical_parts = [part for part in canonical.split() if part]
+    candidate_parts = [part for part in candidate.split() if part]
+    if canonical_parts and candidate_parts and canonical_parts[-1] == candidate_parts[-1]:
+        return True
+
+    return any(candidate in value or value in candidate for value in ([canonical] + aliases) if value)
+
+
+def _score_match_for_label(label: str, context: str) -> float:
+    norm_label = _normalize_name(label)
+    if not norm_label or not context:
+        return 0.0
+
+    if norm_label in context:
+        return 1.0
+
+    label_parts = [part for part in norm_label.split() if part]
+    context_parts = [part for part in context.split() if part]
+    if not label_parts or not context_parts:
+        return 0.0
+
+    overlap = len(set(label_parts) & set(context_parts))
+    overlap_score = overlap / max(1, len(set(label_parts)))
+    surname_score = 0.0
+    if len(label_parts) >= 2 and label_parts[-1] in context_parts:
+        surname_score = 0.75
+    return max(overlap_score, surname_score)
+
+
+def _match_metadata_for_fact(project_id: str, entity_id: str, fact_text: str) -> Dict[str, Any]:
+    context = _normalize_name(fact_text)
+    rows = [row for row in entity.search(Query().project_id == project_id) if _entity_status(row) == "active"]
+    scored: List[Dict[str, Any]] = []
+    for row in rows:
+        labels = [row.get("name", "")] + list(row.get("aliases", []) or [])
+        score = 0.0
+        for label in labels:
+            score = max(score, _score_match_for_label(label, context))
+        if score <= 0:
+            continue
+        scored.append(
+            {
+                "entity_id": row.get("id"),
+                "entity_name": row.get("name"),
+                "score": round(min(1.0, score), 3),
+            }
+        )
+
+    scored.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+    candidates = scored[:3]
+    top_score = candidates[0]["score"] if candidates else 0.0
+    second_score = candidates[1]["score"] if len(candidates) > 1 else 0.0
+    ambiguous = len(candidates) > 1 and top_score < 0.9 and abs(top_score - second_score) <= 0.12
+    chosen = next((item for item in candidates if item.get("entity_id") == entity_id), None)
+    confidence = chosen.get("score", top_score) if chosen else top_score
+    return {
+        "entity_match_confidence": confidence,
+        "entity_match_ambiguous": ambiguous,
+        "entity_match_candidates": candidates,
+        "entity_assignment_confirmed": not ambiguous,
+        "entity_assignment_method": "auto",
+    }
+
+
+def _find_active_entity(project_id: str, name: str, entity_type: str) -> Optional[Dict[str, Any]]:
+    rows = entity.search(Query().project_id == project_id)
+    for row in rows:
+        if _entity_status(row) != "active":
+            continue
+        if row.get("entityType") == entity_type and _matches_entity_name(row, name):
+            return row
+    return None
+
+
+def create_entity(project_id: str, entity_payload: Dict[str, Any], status: str = "active") -> Dict[str, Any]:
     _ensure_stats_doc()
     name = (entity_payload.get("name") or "").strip()
-    entity_type = (entity_payload.get("entityType") or "concept").strip()
-    aliases = list(entity_payload.get("aliases") or [])
-    confidence = float(entity_payload.get("confidence", 0.0))
-    norm_name = _normalize_name(name)
+    if not name:
+        raise ValueError("Entity name is required")
 
-    existing = entity.get(
-        (Query().project_id == project_id)
-        & (Query().entityType == entity_type)
-        & (Query().normalized_name == norm_name)
-    )
+    normalized_name = _normalize_name(name)
+    entity_type = _entity_type(entity_payload)
+
+    if status == "active":
+        suggested = entity.search(
+            (Query().project_id == project_id)
+            & (Query().entityType == entity_type)
+            & (Query().normalized_name == normalized_name)
+            & (Query().status == "suggested")
+        )
+        if suggested:
+            doc = suggested[0]
+            doc["status"] = "active"
+            doc["name"] = name
+            doc["normalized_name"] = normalized_name
+            doc["aliases"] = _safe_unique(list(doc.get("aliases", [])) + list(entity_payload.get("aliases") or []))
+            doc["story_ids"] = _safe_unique(list(doc.get("story_ids", [])) + list(entity_payload.get("story_ids") or []))
+            doc["confidence"] = max(float(doc.get("confidence", 0.0)), float(entity_payload.get("confidence", 1.0)))
+            doc["description"] = entity_payload.get("description", doc.get("description"))
+            doc["notes"] = entity_payload.get("notes", doc.get("notes"))
+            doc["sync_status"] = "pending"
+            doc["sync_message"] = None
+            doc["updated_at"] = _now_ts()
+            entity.update(doc, Query().id == doc["id"])
+            return _hydrate_entity(doc)
 
     now = _now_ts()
-    if not existing:
-        doc = {
-            "id": id_generator(ENTITY_PRE, entity),
-            "project_id": project_id,
-            "story_ids": [story_id] if story_id else [],
-            "entityType": entity_type,
-            "name": name,
-            "normalized_name": norm_name,
-            "aliases": _safe_unique(aliases),
-            "fact_ids": [],
-            "firstMentionedAt": entity_payload.get("firstMentionedAt"),
-            "lastUpdatedAt": entity_payload.get("lastUpdatedAt"),
-            "version": int(entity_payload.get("version", 1)),
-            "confidence": confidence,
-            "created_at": now,
-            "updated_at": now,
-        }
-        entity.insert(doc)
-        entity_count("increase")
-        return doc
+    doc = {
+        "id": id_generator(ENTITY_PRE, entity),
+        "project_id": project_id,
+        "story_ids": _safe_unique(list(entity_payload.get("story_ids") or [])),
+        "entityType": entity_type,
+        "name": name,
+        "normalized_name": normalized_name,
+        "aliases": _safe_unique(list(entity_payload.get("aliases") or [])),
+        "fact_ids": _safe_unique(list(entity_payload.get("fact_ids") or [])),
+        "firstMentionedAt": entity_payload.get("firstMentionedAt"),
+        "lastUpdatedAt": entity_payload.get("lastUpdatedAt"),
+        "version": int(entity_payload.get("version", 1)),
+        "confidence": float(entity_payload.get("confidence", 1.0)),
+        "description": entity_payload.get("description"),
+        "notes": entity_payload.get("notes"),
+        "status": status,
+        "deleted_at": None,
+        "merged_into": None,
+        "redirect_to": None,
+        "sync_status": entity_payload.get("sync_status", "pending"),
+        "sync_message": entity_payload.get("sync_message"),
+        "created_at": now,
+        "updated_at": now,
+    }
+    entity.insert(doc)
+    entity_count("increase")
+    return doc
 
-    existing["aliases"] = _safe_unique(existing.get("aliases", []) + aliases)
-    existing["story_ids"] = _safe_unique(existing.get("story_ids", []) + ([story_id] if story_id else []))
-    existing["confidence"] = max(float(existing.get("confidence", 0.0)), confidence)
-    existing["version"] = int(existing.get("version", 1)) + 1
-    existing["updated_at"] = now
-    existing["lastUpdatedAt"] = entity_payload.get("lastUpdatedAt")
-    entity.update(existing, Query().id == existing["id"])
-    return existing
+
+def update_entity(entity_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    doc = entity.get(Query().id == entity_id)
+    if not doc:
+        return None
+
+    now = _now_ts()
+    current_name = doc.get("name") or ""
+    next_name = (updates.get("name") or current_name).strip()
+    next_type = _entity_type(updates) if ("entityType" in updates or "type" in updates) else (doc.get("entityType") or "concept")
+
+    if next_name and next_name != current_name:
+        doc["aliases"] = _safe_unique(list(doc.get("aliases", [])) + [current_name])
+        doc["name"] = next_name
+        doc["normalized_name"] = _normalize_name(next_name)
+
+    doc["entityType"] = next_type
+    if "aliases" in updates:
+        doc["aliases"] = _safe_unique(list(doc.get("aliases", [])) + list(updates.get("aliases") or []))
+    if "story_ids" in updates:
+        doc["story_ids"] = _safe_unique(list(doc.get("story_ids", [])) + list(updates.get("story_ids") or []))
+    if "description" in updates:
+        doc["description"] = updates.get("description")
+    if "notes" in updates:
+        doc["notes"] = updates.get("notes")
+    if "confidence" in updates:
+        doc["confidence"] = float(updates.get("confidence") or 0.0)
+
+    doc["version"] = int(doc.get("version", 1)) + 1
+    doc["sync_status"] = "pending"
+    doc["sync_message"] = None
+    doc["updated_at"] = now
+    entity.update(doc, Query().id == entity_id)
+    return _hydrate_entity(doc)
+
+
+def soft_delete_entity(entity_id: str) -> Optional[Dict[str, Any]]:
+    doc = entity.get(Query().id == entity_id)
+    if not doc:
+        return None
+
+    now = _now_ts()
+    doc["status"] = "deleted"
+    doc["deleted_at"] = now
+    doc["sync_status"] = "pending"
+    doc["sync_message"] = None
+    doc["updated_at"] = now
+    entity.update(doc, Query().id == entity_id)
+    return _hydrate_entity(doc)
+
+
+def merge_entities(project_id: str, source_entity_id: str, target_entity_id: str) -> Optional[Dict[str, Any]]:
+    source = entity.get(Query().id == source_entity_id)
+    target = entity.get(Query().id == target_entity_id)
+    if not source or not target:
+        return None
+    if source.get("project_id") != project_id or target.get("project_id") != project_id:
+        raise ValueError("Entities must belong to the same project")
+
+    now = _now_ts()
+    target["aliases"] = _safe_unique(list(target.get("aliases", [])) + [source.get("name", "")])
+    target["story_ids"] = _safe_unique(list(target.get("story_ids", [])) + list(source.get("story_ids", [])))
+    target["fact_ids"] = _safe_unique(list(target.get("fact_ids", [])) + list(source.get("fact_ids", [])))
+    target["version"] = int(target.get("version", 1)) + 1
+    target["sync_status"] = "pending"
+    target["sync_message"] = None
+    target["updated_at"] = now
+    entity.update(target, Query().id == target_entity_id)
+
+    for fid in source.get("fact_ids", []):
+        fact_row = fact.get(Query().id == fid)
+        if not fact_row:
+            continue
+        fact_row["entity_id"] = target_entity_id
+        fact_row["updated_at"] = now
+        fact.update(fact_row, Query().id == fid)
+
+    source["status"] = "merged"
+    source["merged_into"] = target_entity_id
+    source["redirect_to"] = target_entity_id
+    source["deleted_at"] = now
+    source["sync_status"] = "pending"
+    source["sync_message"] = None
+    source["updated_at"] = now
+    entity.update(source, Query().id == source_entity_id)
+    return _hydrate_entity(target)
+
+
+def resolve_entity(entity_id: str) -> Optional[Dict[str, Any]]:
+    visited = set()
+    current_id = entity_id
+    while current_id and current_id not in visited:
+        visited.add(current_id)
+        doc = entity.get(Query().id == current_id)
+        if not doc:
+            return None
+        redirect_to = doc.get("redirect_to")
+        if redirect_to:
+            current_id = redirect_to
+            continue
+        return _hydrate_entity(doc)
+    return None
+
+
+def search_entities(project_id: str, query: str, include_deleted: bool = False) -> List[Dict[str, Any]]:
+    normalized = _normalize_name(query)
+    rows = entity.search(Query().project_id == project_id)
+    results: List[Dict[str, Any]] = []
+    for row in rows:
+        if not include_deleted and _entity_status(row) in {"deleted", "merged"}:
+            continue
+        haystack = [row.get("normalized_name", "")] + [_normalize_name(alias) for alias in row.get("aliases", []) or []]
+        if any(normalized in item or item in normalized for item in haystack if item):
+            results.append(_hydrate_entity(row))
+    return results
+
+
+def upsert_entity(project_id: str, story_id: str, entity_payload: Dict[str, Any], canonical: bool = True) -> Dict[str, Any]:
+    _ensure_stats_doc()
+    name = (entity_payload.get("name") or "").strip()
+    if not name:
+        raise ValueError("Entity name is required")
+
+    entity_type = _entity_type(entity_payload)
+    existing = _find_active_entity(project_id, name, entity_type)
+    if existing:
+        existing["aliases"] = _safe_unique(list(existing.get("aliases", [])) + list(entity_payload.get("aliases") or []))
+        existing["story_ids"] = _safe_unique(list(existing.get("story_ids", [])) + ([story_id] if story_id else []))
+        existing["confidence"] = max(float(existing.get("confidence", 0.0)), float(entity_payload.get("confidence", 0.0)))
+        existing["version"] = int(existing.get("version", 1)) + 1
+        existing["updated_at"] = _now_ts()
+        existing["lastUpdatedAt"] = entity_payload.get("lastUpdatedAt")
+        existing["sync_status"] = "pending"
+        existing["sync_message"] = None
+        entity.update(existing, Query().id == existing["id"])
+        return _hydrate_entity(existing)
+
+    suggested = entity.search(
+        (Query().project_id == project_id)
+        & (Query().entityType == entity_type)
+        & (Query().normalized_name == _normalize_name(name))
+        & (Query().status == "suggested")
+    )
+    if suggested:
+        doc = suggested[0]
+        doc["aliases"] = _safe_unique(list(doc.get("aliases", [])) + list(entity_payload.get("aliases") or []))
+        doc["story_ids"] = _safe_unique(list(doc.get("story_ids", [])) + ([story_id] if story_id else []))
+        doc["confidence"] = max(float(doc.get("confidence", 0.0)), float(entity_payload.get("confidence", 0.0)))
+        doc["version"] = int(doc.get("version", 1)) + 1
+        doc["updated_at"] = _now_ts()
+        doc["lastUpdatedAt"] = entity_payload.get("lastUpdatedAt")
+        doc["sync_status"] = "pending"
+        doc["sync_message"] = None
+        entity.update(doc, Query().id == doc["id"])
+        return _hydrate_entity(doc)
+
+    if not canonical:
+        return create_entity(
+            project_id,
+            {
+                **entity_payload,
+                "story_ids": [story_id] if story_id else entity_payload.get("story_ids", []),
+                "entityType": entity_type,
+            },
+            status="suggested",
+        )
+
+    return create_entity(
+        project_id,
+        {
+            **entity_payload,
+            "story_ids": [story_id] if story_id else entity_payload.get("story_ids", []),
+            "entityType": entity_type,
+        },
+        status="active",
+    )
 
 
 def _attach_conflicts(entity_id: str, new_fact: Dict[str, Any]) -> Dict[str, Any]:
@@ -333,9 +634,21 @@ def upsert_fact(project_id: str, story_id: str, entity_id: str, fact_payload: Di
     now = _now_ts()
     if existing:
         existing["confidence"] = max(float(existing.get("confidence", 0.0)), float(fact_payload.get("confidence", 0.0)))
+        if "atomicity_score" in fact_payload:
+            existing["atomicity_score"] = float(fact_payload.get("atomicity_score") or 0.0)
+        if "schema_alignment_score" in fact_payload:
+            existing["schema_alignment_score"] = float(fact_payload.get("schema_alignment_score") or 0.0)
+        if "needs_review" in fact_payload:
+            existing["needs_review"] = bool(fact_payload.get("needs_review"))
+        if "schema_version" in fact_payload:
+            existing["schema_version"] = fact_payload.get("schema_version")
+        if "entity_assignment_confirmed" in fact_payload:
+            existing["entity_assignment_confirmed"] = bool(fact_payload.get("entity_assignment_confirmed"))
         existing["updated_at"] = now
         fact.update(existing, Query().id == existing["id"])
         return existing
+
+    match_meta = _match_metadata_for_fact(project_id, entity_id, fact_payload.get("sourceText") or text)
 
     doc = {
         "id": id_generator(FACT_PRE, fact),
@@ -349,12 +662,21 @@ def upsert_fact(project_id: str, story_id: str, entity_id: str, fact_payload: Di
         "confidence": float(fact_payload.get("confidence", 0.0)),
         "method": fact_payload.get("method", "llm"),
         "status": "pending",
+        "schema_version": fact_payload.get("schema_version"),
+        "atomicity_score": float(fact_payload.get("atomicity_score") or 0.0),
+        "schema_alignment_score": float(fact_payload.get("schema_alignment_score") or 0.0),
+        "needs_review": bool(fact_payload.get("needs_review", False)),
         "conflict_key": _infer_conflict_key(text, entity_id),
         "conflict_group_id": None,
         "contradicts": [],
         "reviewed_by": None,
         "reviewed_at": None,
         "decision_reason": None,
+        "entity_match_confidence": match_meta["entity_match_confidence"],
+        "entity_match_ambiguous": match_meta["entity_match_ambiguous"],
+        "entity_match_candidates": match_meta["entity_match_candidates"],
+        "entity_assignment_confirmed": match_meta["entity_assignment_confirmed"],
+        "entity_assignment_method": match_meta["entity_assignment_method"],
         "created_at": now,
         "updated_at": now,
     }
@@ -382,7 +704,7 @@ def persist_extracted_entities(
     fact_ids: List[str] = []
 
     for item in extracted_entities:
-        ent = upsert_entity(project_id, story_id, item)
+        ent = upsert_entity(project_id, story_id, item, canonical=False)
         persisted_facts: List[Dict[str, Any]] = []
         for f in item.get("facts", []):
             stored = upsert_fact(project_id, story_id, ent["id"], f)
@@ -425,6 +747,8 @@ def set_fact_status(
     status: str,
     reviewed_by: Optional[str] = None,
     decision_reason: Optional[str] = None,
+    confirm_assignment: bool = False,
+    confirm_low_quality: bool = False,
 ) -> Optional[Dict[str, Any]]:
     if status not in {"pending", "approved", "rejected"}:
         raise ValueError("Invalid fact status")
@@ -432,6 +756,21 @@ def set_fact_status(
     doc = fact.get(Query().id == fact_id)
     if not doc:
         return None
+
+    if status in {"approved", "rejected"}:
+        is_ambiguous = bool(doc.get("entity_match_ambiguous"))
+        is_confirmed = bool(doc.get("entity_assignment_confirmed"))
+        if is_ambiguous and not is_confirmed and not confirm_assignment:
+            raise ValueError("Ambiguous entity assignment. Reassign or confirm assignment before review.")
+        if confirm_assignment:
+            doc["entity_assignment_confirmed"] = True
+
+    if status == "approved":
+        needs_review = bool(doc.get("needs_review"))
+        atomicity_score = float(doc.get("atomicity_score") or 0.0)
+        schema_alignment_score = float(doc.get("schema_alignment_score") or 0.0)
+        if (needs_review or atomicity_score < 0.75 or schema_alignment_score < 0.55) and not confirm_low_quality:
+            raise ValueError("Low-quality fact requires explicit confirmation before approval.")
 
     doc["status"] = status
     doc["reviewed_by"] = reviewed_by
@@ -446,7 +785,15 @@ def _session_unresolved_fact_ids(session: Dict[str, Any]) -> List[str]:
     unresolved: List[str] = []
     for fid in session.get("fact_ids", []):
         row = fact.get(Query().id == fid)
-        if row and row.get("status") == "pending":
+        if not row:
+            continue
+        confidence = row.get("entity_match_confidence")
+        if isinstance(confidence, (int, float)) and confidence <= 0:
+            continue
+        if row.get("status") == "pending":
+            unresolved.append(fid)
+            continue
+        if row.get("entity_match_ambiguous") and not row.get("entity_assignment_confirmed"):
             unresolved.append(fid)
     return unresolved
 
@@ -513,6 +860,20 @@ def mark_review_session_sync_result(session_id: str, ok: bool, message: str) -> 
     return session
 
 
+def get_review_sessions_by_project(project_id: str) -> List[Dict[str, Any]]:
+    rows = review_session.search(Query().project_id == project_id)
+    return sorted(rows, key=lambda row: row.get("created_at", 0), reverse=True)
+
+
+def get_retryable_review_sessions(project_id: str) -> List[Dict[str, Any]]:
+    rows = get_review_sessions_by_project(project_id)
+    return [
+        row
+        for row in rows
+        if row.get("status") == "submitted" and row.get("syncStatus") in {"pending", "error"}
+    ]
+
+
 def get_facts_by_ids(fact_ids: List[str]) -> List[Dict[str, Any]]:
     if not fact_ids:
         return []
@@ -528,6 +889,8 @@ def get_entities_by_story(story_id: str) -> List[Dict[str, Any]]:
     rows = entity.search(Query().story_ids.test(lambda ids: isinstance(ids, list) and story_id in ids))
     output: List[Dict[str, Any]] = []
     for e in rows:
+        if _entity_status(e) in {"deleted", "merged"}:
+            continue
         ec = dict(e)
         ec["facts"] = fact.search(Query().entity_id == e["id"])
         output.append(ec)
@@ -538,14 +901,79 @@ def get_entities_by_project(project_id: str) -> List[Dict[str, Any]]:
     rows = entity.search(Query().project_id == project_id)
     output: List[Dict[str, Any]] = []
     for e in rows:
+        if _entity_status(e) in {"deleted", "merged", "suggested"}:
+            continue
         ec = dict(e)
         ec["facts"] = fact.search(Query().entity_id == e["id"])
         output.append(ec)
     return output
 
 
+def get_suggested_entities_by_project(project_id: str) -> List[Dict[str, Any]]:
+    rows = entity.search((Query().project_id == project_id) & (Query().status == "suggested"))
+    output: List[Dict[str, Any]] = []
+    for e in rows:
+        ec = dict(e)
+        ec["facts"] = fact.search(Query().entity_id == e["id"])
+        output.append(ec)
+    return output
+
+
+def promote_entity(entity_id: str) -> Optional[Dict[str, Any]]:
+    doc = entity.get(Query().id == entity_id)
+    if not doc:
+        return None
+    doc["status"] = "active"
+    doc["sync_status"] = "pending"
+    doc["sync_message"] = None
+    doc["updated_at"] = _now_ts()
+    entity.update(doc, Query().id == entity_id)
+    return _hydrate_entity(doc)
+
+
 def get_entity_facts(entity_id: str) -> List[Dict[str, Any]]:
     return fact.search(Query().entity_id == entity_id)
+
+
+def reassign_fact_entity(fact_id: str, new_entity_id: str) -> Optional[Dict[str, Any]]:
+    fact_row = fact.get(Query().id == fact_id)
+    new_entity = entity.get(Query().id == new_entity_id)
+    if not fact_row or not new_entity:
+        return None
+
+    old_entity_id = fact_row.get("entity_id")
+    now = _now_ts()
+
+    fact_row["entity_id"] = new_entity_id
+    fact_row["entity_assignment_method"] = "manual"
+    fact_row["entity_assignment_confirmed"] = True
+    fact_row["entity_match_ambiguous"] = False
+    fact_row["entity_match_confidence"] = 1.0
+    fact_row["entity_match_candidates"] = [
+        {
+            "entity_id": new_entity.get("id"),
+            "entity_name": new_entity.get("name"),
+            "score": 1.0,
+        }
+    ]
+    fact_row["updated_at"] = now
+    fact.update(fact_row, Query().id == fact_id)
+
+    if old_entity_id and old_entity_id != new_entity_id:
+        old_entity = entity.get(Query().id == old_entity_id)
+        if old_entity:
+            old_entity["fact_ids"] = [fid for fid in old_entity.get("fact_ids", []) if fid != fact_id]
+            old_entity["sync_status"] = "pending"
+            old_entity["sync_message"] = None
+            old_entity["updated_at"] = now
+            entity.update(old_entity, Query().id == old_entity_id)
+
+    new_entity["fact_ids"] = _safe_unique(list(new_entity.get("fact_ids", [])) + [fact_id])
+    new_entity["sync_status"] = "pending"
+    new_entity["sync_message"] = None
+    new_entity["updated_at"] = now
+    entity.update(new_entity, Query().id == new_entity_id)
+    return fact_row
 
 
 def get_project_conflicts(project_id: str) -> List[Dict[str, Any]]:
@@ -561,15 +989,46 @@ def get_project_conflicts(project_id: str) -> List[Dict[str, Any]]:
     for gid, values in grouped.items():
         if len(values) < 2:
             continue
+        story_ids = sorted(_safe_unique([v.get("story_id") for v in values if v.get("story_id")]))
         conflicts.append(
             {
                 "conflictGroupId": gid,
                 "factCount": len(values),
                 "facts": values,
+                "storyIds": story_ids,
+                "conflictType": "intra-story" if len(story_ids) <= 1 else "inter-story",
                 "resolved": all(v.get("status") != "pending" for v in values),
             }
         )
     return conflicts
+
+
+def get_story_conflicts(story_id: str, include_cross_story: bool = True) -> List[Dict[str, Any]]:
+    sdoc = get_story(story_id)
+    if not sdoc:
+        return []
+
+    all_conflicts = get_project_conflicts(sdoc.get("project_id"))
+    scoped: List[Dict[str, Any]] = []
+    for conflict in all_conflicts:
+        facts = conflict.get("facts", [])
+        same_story = [f for f in facts if f.get("story_id") == story_id]
+        if include_cross_story:
+            if same_story:
+                scoped.append(conflict)
+            continue
+        if len(same_story) >= 2:
+            scoped.append(
+                {
+                    **conflict,
+                    "factCount": len(same_story),
+                    "facts": same_story,
+                    "storyIds": [story_id],
+                    "conflictType": "intra-story",
+                    "resolved": all(v.get("status") != "pending" for v in same_story),
+                }
+            )
+    return scoped
 
 
 def get_canon_index(project_id: Optional[str] = None) -> List[Dict[str, Any]]:

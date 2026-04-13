@@ -39,6 +39,14 @@ const projectService = {
     localStorage.setItem(STORAGE_KEY, project.id);
   },
 
+  async deleteProject(projectId) {
+    if (!projectId) return;
+    const res = await fetch(`${API_BASE}/projects/${projectId}`, { method: "DELETE" });
+    if (!res.ok) {
+      throw new Error(`Failed to delete project (${res.status})`);
+    }
+  },
+
   async clearProject() {
     localStorage.removeItem(STORAGE_KEY);
   }

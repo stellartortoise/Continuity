@@ -4,6 +4,8 @@ function normalizeResult(result, fallbackText) {
     return {
         ...result,
         summary: (fallbackText || "").slice(0, 140) + ((fallbackText || "").length > 140 ? "..." : ""),
+        entitySummary: result.summary || [],
+        crossStoryConflictsCount: result.crossStoryConflictsCount || 0,
         entities: (result.entities || []).map((entity) => ({
             id: entity.id,
             name: entity.name,
@@ -12,12 +14,20 @@ function normalizeResult(result, fallbackText) {
             facts: (entity.facts || []).map((fact, index) => ({
                 id: fact.id || `${entity.id}-fact-${index}`,
                 text: fact.fact,
+                entityId: fact.entity_id,
                 accepted: fact.status === "approved" ? true : fact.status === "rejected" ? false : null,
                 confidence: fact.confidence,
                 sourceText: fact.sourceText,
                 status: fact.status,
                 conflictGroupId: fact.conflict_group_id,
                 contradicts: fact.contradicts || [],
+                matchConfidence: fact.entity_match_confidence,
+                matchAmbiguous: fact.entity_match_ambiguous,
+                matchCandidates: fact.entity_match_candidates || [],
+                assignmentConfirmed: fact.entity_assignment_confirmed,
+                atomicityScore: fact.atomicity_score,
+                schemaAlignmentScore: fact.schema_alignment_score,
+                needsReview: fact.needs_review,
             })),
         })),
     };
@@ -50,7 +60,7 @@ export async function extractEntities(text) {
     throw new Error("extractEntities(text) is deprecated. Use uploadSegment(projectId, text, title).");
 }
 
-export async function reviewFact(factId, status, reviewedBy, decisionReason) {
+export async function reviewFact(factId, status, reviewedBy, decisionReason, confirmAssignment = false, confirmLowQuality = false) {
     const res = await fetch(`${API_BASE}/facts/${factId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -58,10 +68,38 @@ export async function reviewFact(factId, status, reviewedBy, decisionReason) {
             status,
             reviewed_by: reviewedBy,
             decision_reason: decisionReason,
+            confirm_assignment: Boolean(confirmAssignment),
+            confirm_low_quality: Boolean(confirmLowQuality),
         }),
     });
     if (!res.ok) {
-        throw new Error(`Fact review failed (${res.status})`);
+        let message = `Fact review failed (${res.status})`;
+        try {
+            const data = await res.json();
+            message = data.detail || data.message || message;
+        } catch {
+            // Ignore parse errors and use generic message.
+        }
+        throw new Error(message);
+    }
+    return res.json();
+}
+
+export async function assignFactEntity(factId, entityId) {
+    const res = await fetch(`${API_BASE}/facts/${factId}/entity`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entity_id: entityId }),
+    });
+    if (!res.ok) {
+        let message = `Fact entity assignment failed (${res.status})`;
+        try {
+            const data = await res.json();
+            message = data.detail || message;
+        } catch {
+            // Ignore parse errors and use generic message.
+        }
+        throw new Error(message);
     }
     return res.json();
 }

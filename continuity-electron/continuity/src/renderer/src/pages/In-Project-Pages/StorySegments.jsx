@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import SegmentTextBlock from "../../components/ProjectLayout/SegmentTextBlock";
 import EntityAnalysisCard from "../../components/ProjectLayout/EntityAnalysisCard";
 import projectService from "../../services/projectService";
-import { reviewFact, submitReviewSession } from "../../services/aiService";
+import { assignFactEntity, reviewFact, submitReviewSession } from "../../services/aiService";
 
 const API_BASE = "http://localhost:8001";
 
@@ -14,6 +14,9 @@ const StorySegments = ({uploadedSegments}) => {
   const [error, setError] = useState(null);
   const [submitMessages, setSubmitMessages] = useState({});
   const [submittingBySegment, setSubmittingBySegment] = useState({});
+  const [factEntityOverrides, setFactEntityOverrides] = useState({});
+  const [projectEntityOptions, setProjectEntityOptions] = useState([]);
+  const [explicitEntityChoiceByFact, setExplicitEntityChoiceByFact] = useState({});
 
   useEffect(() => {
     const loadStored = async () => {
@@ -32,11 +35,26 @@ const StorySegments = ({uploadedSegments}) => {
           return;
         }
 
+        const canonRes = await fetch(`${API_BASE}/projects/${project.id}/canon/entities`);
+        if (canonRes.ok) {
+          const canonData = await canonRes.json();
+          setProjectEntityOptions((canonData.entities || []).map((entity) => ({
+            id: entity.id,
+            name: entity.name,
+            type: entity.entityType,
+          })));
+        } else {
+          setProjectEntityOptions([]);
+        }
+
         const stories = await storyRes.json();
         const hydrated = await Promise.all(
           (stories || []).map(async (s) => {
             const entRes = await fetch(`${API_BASE}/stories/${s.id}/entities`);
             const entData = entRes.ok ? await entRes.json() : { entities: [] };
+            const conflictRes = await fetch(`${API_BASE}/stories/${s.id}/conflicts?include_cross_story=true`);
+            const conflictData = conflictRes.ok ? await conflictRes.json() : { conflicts: [] };
+            const crossStoryConflictsCount = (conflictData.conflicts || []).filter((item) => item.conflictType === "inter-story").length;
             const entities = (entData.entities || []).map((entity) => ({
               id: entity.id,
               name: entity.name,
@@ -45,6 +63,14 @@ const StorySegments = ({uploadedSegments}) => {
               facts: (entity.facts || []).map((fact) => ({
                 id: fact.id,
                 text: fact.fact,
+                entityId: fact.entity_id,
+                matchConfidence: fact.entity_match_confidence,
+                matchAmbiguous: fact.entity_match_ambiguous,
+                matchCandidates: fact.entity_match_candidates || [],
+                assignmentConfirmed: fact.entity_assignment_confirmed,
+                atomicityScore: fact.atomicity_score,
+                schemaAlignmentScore: fact.schema_alignment_score,
+                needsReview: fact.needs_review,
                 accepted: fact.status === "approved" ? true : fact.status === "rejected" ? false : null,
               })),
             }));
@@ -58,6 +84,7 @@ const StorySegments = ({uploadedSegments}) => {
               reviewSessionId: s.reviewSessionId,
               pendingFactsCount: s.pendingFactsCount,
               conflictsDetected: s.conflictsDetected,
+              crossStoryConflictsCount,
             };
           })
         );
@@ -90,11 +117,68 @@ const StorySegments = ({uploadedSegments}) => {
           if (ent.id !== entityId) return ent;
           return {
             ...ent,
-            facts: ent.facts.map(f => f.id === factId ? { ...f, accepted } : f),
+            facts: ent.facts.map(f => f.id === factId ? { ...f, accepted, assignmentConfirmed: true, matchAmbiguous: false } : f),
           };
         }),
       };
     }));
+  };
+
+  const findFactById = (segmentId, factId) => {
+    const seg = storedSegments.find((item) => item.id === segmentId);
+    if (!seg) return null;
+    for (const ent of seg.entities || []) {
+      const fact = (ent.facts || []).find((item) => item.id === factId);
+      if (fact) {
+        return { fact, entityId: ent.id };
+      }
+    }
+    return null;
+  };
+
+  const applyFactEntityMove = (segmentId, fromEntityId, factId, toEntityId) => {
+    setStoredSegments(prev => prev.map(seg => {
+      if (seg.id !== segmentId) return seg;
+      const movedFact = seg.entities
+        .flatMap((item) => item.facts)
+        .find((fact) => fact.id === factId);
+      if (!movedFact) return seg;
+
+      let foundTarget = false;
+      let nextEntities = seg.entities.map((entity) => {
+        if (entity.id === fromEntityId) {
+          return {
+            ...entity,
+            facts: entity.facts.filter((fact) => fact.id !== factId),
+          };
+        }
+        if (entity.id === toEntityId) {
+          foundTarget = true;
+          return {
+            ...entity,
+            facts: [...entity.facts, { ...movedFact, entityId: toEntityId, matchConfidence: 1, matchAmbiguous: false, assignmentConfirmed: true }],
+          };
+        }
+        return entity;
+      });
+
+      if (!foundTarget) {
+        const fallback = projectEntityOptions.find((item) => item.id === toEntityId);
+        nextEntities = [
+          ...nextEntities,
+          {
+            id: toEntityId,
+            name: fallback?.name || toEntityId,
+            type: fallback?.type || "concept",
+            aliases: [],
+            facts: [{ ...movedFact, entityId: toEntityId, matchConfidence: 1, matchAmbiguous: false, assignmentConfirmed: true }],
+          },
+        ];
+      }
+
+      return { ...seg, entities: nextEntities };
+    }));
+    setFactEntityOverrides((prev) => ({ ...prev, [factId]: toEntityId }));
   };
 
   const getPendingCount = (segment) => {
@@ -106,8 +190,36 @@ const StorySegments = ({uploadedSegments}) => {
   const handleAccept = async (segmentId, entityId, factId) => {
     setError(null);
     try {
-      await reviewFact(factId, "approved");
-      updateFactDecision(segmentId, entityId, factId, true);
+      const factData = findFactById(segmentId, factId);
+      const explicitChoice = explicitEntityChoiceByFact[factId];
+      const requiresExplicit = Boolean(factData?.fact?.matchAmbiguous && !factData?.fact?.assignmentConfirmed);
+      if (requiresExplicit && !explicitChoice) {
+        setError("Select an entity for ambiguous facts before approving.");
+        return;
+      }
+
+      const overrideEntityId = explicitChoice || factEntityOverrides[factId];
+      if (overrideEntityId && overrideEntityId !== entityId) {
+        await assignFactEntity(factId, overrideEntityId);
+        applyFactEntityMove(segmentId, entityId, factId, overrideEntityId);
+      }
+      const reviewedFact = findFactById(segmentId, factId)?.fact;
+      const isLowQuality = Boolean(
+        reviewedFact && (
+          reviewedFact.needsReview ||
+          (typeof reviewedFact.atomicityScore === "number" && reviewedFact.atomicityScore < 0.75) ||
+          (typeof reviewedFact.schemaAlignmentScore === "number" && reviewedFact.schemaAlignmentScore < 0.55)
+        )
+      );
+      await reviewFact(
+        factId,
+        "approved",
+        null,
+        isLowQuality ? "User approved low-quality fact" : null,
+        requiresExplicit,
+        isLowQuality,
+      );
+      updateFactDecision(segmentId, overrideEntityId && overrideEntityId !== entityId ? overrideEntityId : entityId, factId, true);
     } catch (e) {
       setError(e.message || "Failed to approve fact");
     }
@@ -116,10 +228,53 @@ const StorySegments = ({uploadedSegments}) => {
   const handleReject = async (segmentId, entityId, factId) => {
     setError(null);
     try {
-      await reviewFact(factId, "rejected");
-      updateFactDecision(segmentId, entityId, factId, false);
+      const factData = findFactById(segmentId, factId);
+      const explicitChoice = explicitEntityChoiceByFact[factId];
+      const requiresExplicit = Boolean(factData?.fact?.matchAmbiguous && !factData?.fact?.assignmentConfirmed);
+      if (requiresExplicit && !explicitChoice) {
+        setError("Select an entity for ambiguous facts before rejecting.");
+        return;
+      }
+
+      const overrideEntityId = explicitChoice || factEntityOverrides[factId];
+      if (overrideEntityId && overrideEntityId !== entityId) {
+        await assignFactEntity(factId, overrideEntityId);
+        applyFactEntityMove(segmentId, entityId, factId, overrideEntityId);
+      }
+      await reviewFact(factId, "rejected", null, null, requiresExplicit);
+      updateFactDecision(segmentId, overrideEntityId && overrideEntityId !== entityId ? overrideEntityId : entityId, factId, false);
     } catch (e) {
       setError(e.message || "Failed to reject fact");
+    }
+  };
+
+  const handleChangeEntity = async (segmentId, entityId, factId, nextEntityId) => {
+    if (!nextEntityId) {
+      setFactEntityOverrides((prev) => {
+        const copy = { ...prev };
+        delete copy[factId];
+        return copy;
+      });
+      setExplicitEntityChoiceByFact((prev) => {
+        const copy = { ...prev };
+        delete copy[factId];
+        return copy;
+      });
+      return;
+    }
+
+    setExplicitEntityChoiceByFact((prev) => ({ ...prev, [factId]: nextEntityId }));
+
+    if (nextEntityId === entityId) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await assignFactEntity(factId, nextEntityId);
+      applyFactEntityMove(segmentId, entityId, factId, nextEntityId);
+    } catch (e) {
+      setError(e.message || "Failed to reassign entity");
     }
   };
 
@@ -158,7 +313,10 @@ const StorySegments = ({uploadedSegments}) => {
 
           <div className="segment-card-body">
             <p>{segment.summary}</p>
-            <p>Pending facts: {getPendingCount(segment)} | Conflicts: {segment.conflictsDetected || 0}</p>
+            <p>
+              Pending facts: {getPendingCount(segment)} | Conflicts: {segment.conflictsDetected || 0}
+              {` | Cross-story conflicts: ${segment.crossStoryConflictsCount || 0}`}
+            </p>
             {submitMessages[segment.id] && <p style={{color: "#2a6"}}>{submitMessages[segment.id]}</p>}
           </div>
 
@@ -195,9 +353,12 @@ const StorySegments = ({uploadedSegments}) => {
                 <EntityAnalysisCard 
                   key={entity.id} 
                   entity={entity} 
+                  entityOptions={projectEntityOptions.length > 0 ? projectEntityOptions : segment.entities}
+                  selectedEntityByFact={explicitEntityChoiceByFact}
                   editable={true}
                   onAccept={(entityId, factId) => handleAccept(segment.id, entityId, factId)}
                   onReject={(entityId, factId) => handleReject(segment.id, entityId, factId)}
+                  onChangeEntity={(entityId, factId, nextEntityId) => handleChangeEntity(segment.id, entityId, factId, nextEntityId)}
                   />
                 ))}
               </div>

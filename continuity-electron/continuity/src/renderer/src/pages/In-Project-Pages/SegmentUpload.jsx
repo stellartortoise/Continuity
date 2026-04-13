@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { extractEntities } from '../../services/aiService';
+import { uploadSegment, reviewFact, submitReviewSession } from '../../services/aiService';
 import EntityAnalysisCard from '../../components/ProjectLayout/EntityAnalysisCard';
 import LoadingOverlay from '../../components/ProjectLayout/LoadingOverlay';
 import projectService from '../../services/projectService';
@@ -7,12 +7,24 @@ import projectService from '../../services/projectService';
 const SegmentUpload = ({setSegments}) => {
     const [segment,setSegment] = useState("");
     const [analysis, setAnalysis] = useState(null);
+    const [projectId, setProjectId] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
     const [segmentTitle, setSegmentTitle] = useState("");
+    const [submitMessage, setSubmitMessage] = useState(null);
+    const [isSubmittingReview, setIsSubmittingReview] = useState(false);
     const [progress, setProgress] = useState(0);
     const [step, setStep] = useState("1/3");
     const [subText, setSubText] = useState("");
     const [eta, setEta] = useState("calculating…");
+
+    useEffect(() => {
+        const loadProject = async () => {
+            const project = await projectService.loadProject();
+            setProjectId(project?.id || null);
+        };
+        loadProject();
+    }, []);
 
     useEffect(() => {
         if (!loading) return;
@@ -67,22 +79,30 @@ const SegmentUpload = ({setSegments}) => {
         e.preventDefault();
 
         if (!segment.trim()) return;
+        if (!projectId) {
+            setError("No active project selected.");
+            return;
+        }
 
         setError(null);
-        setSubmitError(null);
         setSubmitMessage(null);
         setLoading(true); // show the loading overlayyy
 
         try {
             //load backend
-            const result = await extractEntities(segment);
+            const result = await uploadSegment(projectId, segment, segmentTitle.trim() || undefined);
 
             const newSegment = {
-                id: Date.now(),
-                title: segmentTitle.trim() || `Segment ${Date.now()}`, // inputted title or fallback title
+                id: result.story?.id || Date.now(),
+                title: result.story?.title || segmentTitle.trim() || `Segment ${Date.now()}`,
                 summary:result.summary,
                 text:segment,
-                entities:result.entities
+                entities:result.entities,
+                entitySummary: result.entitySummary || [],
+                reviewSessionId: result.reviewSessionId,
+                pendingFactsCount: result.pendingFactsCount,
+                conflictsDetected: result.conflictsDetected,
+                crossStoryConflictsCount: result.crossStoryConflictsCount || 0,
             }
 
             // Save it to global state
@@ -112,78 +132,94 @@ const SegmentUpload = ({setSegments}) => {
 
     }
 
-    const handleAccept = (entityId, factId) => {
-        setAnalysis(prev => ({
-            ...prev,
-            entities: prev.entities.map(e => {
-                if (e.id !== entityId) return e;
+    const updateFactLocally = (entityId, factId, accepted) => {
+        setAnalysis(prev => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                entities: prev.entities.map(e => {
+                    if (e.id !== entityId) return e;
+                    return {
+                        ...e,
+                        facts: e.facts.map(f => (f.id === factId ? { ...f, accepted } : f)),
+                    };
+                }),
+            };
+        });
 
-                return {
-                    ...e,
-                    facts: e.facts.map(f =>
-                        f.id === factId ? { ...f, accepted: true } : f
-                    )
-                };
-            })
-        }));
-
-        // update the correct segment
         setSegments(prev =>
             prev.map(seg => {
-                if (seg.id !== analysis.segmentId) return seg;
-
+                if (seg.id !== analysis?.segmentId) return seg;
                 return {
                     ...seg,
                     entities: seg.entities.map(e => {
                         if (e.id !== entityId) return e;
-
-                        return{
-                            ...e,
-                            facts: e.facts.map(f => 
-                                f.id === factId ? {...f,accepted:true} : f
-                            )
-                        }
-                    })
-                }
-            })
-        )
-    };
-
-    const handleReject = (entityId, factId) => {
-        setAnalysis(prev => ({
-            ...prev,
-            entities: prev.entities.map(e => {
-                if (e.id !== entityId) return e;
-
-                return {
-                    ...e,
-                    facts: e.facts.map(f =>
-                        f.id === factId ? { ...f, accepted: false } : f
-                    )
-                };
-            })
-        }));
-
-        // update the correct segment
-        setSegments(prev =>
-            prev.map(seg => {
-                if (seg.id !== analysis.segmentId) return seg;
-
-                return {
-                    ...seg,
-                    entities: seg.entities.map(e => {
-                        if (e.id !== entityId) return e;
-
                         return {
                             ...e,
-                            facts: e.facts.map(f =>
-                                f.id === factId ? { ...f, accepted: false } : f
-                            )
+                            facts: e.facts.map(f => (f.id === factId ? { ...f, accepted } : f)),
                         };
-                    })
+                    }),
                 };
             })
         );
+    };
+
+    const handleAccept = async (entityId, factId) => {
+        setError(null);
+        try {
+            const currentFact = (analysis?.entities || [])
+                .flatMap((entity) => entity.facts || [])
+                .find((fact) => fact.id === factId);
+            const isLowQuality = Boolean(
+                currentFact && (
+                    currentFact.needsReview ||
+                    (typeof currentFact.atomicityScore === "number" && currentFact.atomicityScore < 0.75) ||
+                    (typeof currentFact.schemaAlignmentScore === "number" && currentFact.schemaAlignmentScore < 0.55)
+                )
+            );
+            await reviewFact(
+                factId,
+                "approved",
+                null,
+                isLowQuality ? "User approved low-quality fact" : null,
+                true,
+                isLowQuality,
+            );
+            updateFactLocally(entityId, factId, true);
+        } catch (e) {
+            setError(e.message || "Failed to approve fact");
+        }
+    };
+
+    const handleReject = async (entityId, factId) => {
+        setError(null);
+        try {
+            await reviewFact(factId, "rejected", null, null, true);
+            updateFactLocally(entityId, factId, false);
+        } catch (e) {
+            setError(e.message || "Failed to reject fact");
+        }
+    };
+
+    const countPendingFacts = () => {
+        return (analysis?.entities || []).reduce((count, entity) => {
+            return count + (entity.facts || []).filter(f => f.accepted === null).length;
+        }, 0);
+    };
+
+    const handleSubmitReview = async () => {
+        if (!analysis?.reviewSessionId) return;
+        setError(null);
+        setSubmitMessage(null);
+        setIsSubmittingReview(true);
+        try {
+            const result = await submitReviewSession(analysis.reviewSessionId);
+            setSubmitMessage(result.message || "Review submitted");
+        } catch (e) {
+            setError(e.message || "Failed to submit review session");
+        } finally {
+            setIsSubmittingReview(false);
+        }
     };
 
     
@@ -216,18 +252,39 @@ const SegmentUpload = ({setSegments}) => {
                 {segment.length} characters
             </div>
             <div>
-                <button type='submit' disabled={!segment.trim()}>
+                <button type='submit' disabled={!segment.trim() || !projectId || loading}>
                     Submit
                 </button>
             </div>
         </div>
     </form>
 
+    {error && <p style={{color: "#a33"}}>{error}</p>}
+    {submitMessage && <p style={{color: "#2a6"}}>{submitMessage}</p>}
+
     {/* Only render below if analysis exists */}
         {analysis && (
             <div className='segment-summary' style={{padding:"2rem", backgroundColor:"red",margin:"5px", borderRadius:"8px" }}>
                 <div>{analysis.summary}</div>
-                <div style={{marginTop: "0.5rem"}}>Pending facts: {analysis.pendingFactsCount || 0} | Conflicts: {analysis.conflictsDetected || 0}</div>
+                <div style={{marginTop: "0.5rem"}}>
+                    Pending facts: {analysis.pendingFactsCount || 0} | Conflicts: {analysis.conflictsDetected || 0}
+                    {` | Cross-story conflicts: ${analysis.crossStoryConflictsCount || 0}`}
+                </div>
+                {analysis.entitySummary?.length > 0 && (
+                    <div style={{marginTop: "0.75rem", background: "rgba(255,255,255,0.08)", padding: "0.5rem", borderRadius: "6px"}}>
+                        <strong>Extraction Summary</strong>
+                        {analysis.entitySummary.map((entity) => (
+                            <div key={entity.entityId || entity.entityName} style={{marginTop: "0.35rem"}}>
+                                <div>{entity.entityName} ({entity.entityType})</div>
+                                {(entity.sections || []).map((section) => (
+                                    <div key={`${entity.entityId}-${section.name}`} style={{opacity: 0.9}}>
+                                        {section.name}: {(section.facts || []).join(" | ")}
+                                    </div>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
+                )}
                 <div style={{marginTop: "0.75rem"}}>
                     <button
                         type='button'
@@ -244,6 +301,7 @@ const SegmentUpload = ({setSegments}) => {
             <EntityAnalysisCard
                 key={entity.id}
                 entity={entity}
+                entityOptions={analysis.entities}
                 editable={true}
                 onAccept={handleAccept}
                 onReject={handleReject}
