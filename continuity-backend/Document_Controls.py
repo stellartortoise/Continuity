@@ -634,6 +634,14 @@ def upsert_fact(project_id: str, story_id: str, entity_id: str, fact_payload: Di
     now = _now_ts()
     if existing:
         existing["confidence"] = max(float(existing.get("confidence", 0.0)), float(fact_payload.get("confidence", 0.0)))
+        if "atomicity_score" in fact_payload:
+            existing["atomicity_score"] = float(fact_payload.get("atomicity_score") or 0.0)
+        if "schema_alignment_score" in fact_payload:
+            existing["schema_alignment_score"] = float(fact_payload.get("schema_alignment_score") or 0.0)
+        if "needs_review" in fact_payload:
+            existing["needs_review"] = bool(fact_payload.get("needs_review"))
+        if "schema_version" in fact_payload:
+            existing["schema_version"] = fact_payload.get("schema_version")
         if "entity_assignment_confirmed" in fact_payload:
             existing["entity_assignment_confirmed"] = bool(fact_payload.get("entity_assignment_confirmed"))
         existing["updated_at"] = now
@@ -654,6 +662,10 @@ def upsert_fact(project_id: str, story_id: str, entity_id: str, fact_payload: Di
         "confidence": float(fact_payload.get("confidence", 0.0)),
         "method": fact_payload.get("method", "llm"),
         "status": "pending",
+        "schema_version": fact_payload.get("schema_version"),
+        "atomicity_score": float(fact_payload.get("atomicity_score") or 0.0),
+        "schema_alignment_score": float(fact_payload.get("schema_alignment_score") or 0.0),
+        "needs_review": bool(fact_payload.get("needs_review", False)),
         "conflict_key": _infer_conflict_key(text, entity_id),
         "conflict_group_id": None,
         "contradicts": [],
@@ -736,6 +748,7 @@ def set_fact_status(
     reviewed_by: Optional[str] = None,
     decision_reason: Optional[str] = None,
     confirm_assignment: bool = False,
+    confirm_low_quality: bool = False,
 ) -> Optional[Dict[str, Any]]:
     if status not in {"pending", "approved", "rejected"}:
         raise ValueError("Invalid fact status")
@@ -751,6 +764,13 @@ def set_fact_status(
             raise ValueError("Ambiguous entity assignment. Reassign or confirm assignment before review.")
         if confirm_assignment:
             doc["entity_assignment_confirmed"] = True
+
+    if status == "approved":
+        needs_review = bool(doc.get("needs_review"))
+        atomicity_score = float(doc.get("atomicity_score") or 0.0)
+        schema_alignment_score = float(doc.get("schema_alignment_score") or 0.0)
+        if (needs_review or atomicity_score < 0.75 or schema_alignment_score < 0.55) and not confirm_low_quality:
+            raise ValueError("Low-quality fact requires explicit confirmation before approval.")
 
     doc["status"] = status
     doc["reviewed_by"] = reviewed_by
@@ -969,15 +989,46 @@ def get_project_conflicts(project_id: str) -> List[Dict[str, Any]]:
     for gid, values in grouped.items():
         if len(values) < 2:
             continue
+        story_ids = sorted(_safe_unique([v.get("story_id") for v in values if v.get("story_id")]))
         conflicts.append(
             {
                 "conflictGroupId": gid,
                 "factCount": len(values),
                 "facts": values,
+                "storyIds": story_ids,
+                "conflictType": "intra-story" if len(story_ids) <= 1 else "inter-story",
                 "resolved": all(v.get("status") != "pending" for v in values),
             }
         )
     return conflicts
+
+
+def get_story_conflicts(story_id: str, include_cross_story: bool = True) -> List[Dict[str, Any]]:
+    sdoc = get_story(story_id)
+    if not sdoc:
+        return []
+
+    all_conflicts = get_project_conflicts(sdoc.get("project_id"))
+    scoped: List[Dict[str, Any]] = []
+    for conflict in all_conflicts:
+        facts = conflict.get("facts", [])
+        same_story = [f for f in facts if f.get("story_id") == story_id]
+        if include_cross_story:
+            if same_story:
+                scoped.append(conflict)
+            continue
+        if len(same_story) >= 2:
+            scoped.append(
+                {
+                    **conflict,
+                    "factCount": len(same_story),
+                    "facts": same_story,
+                    "storyIds": [story_id],
+                    "conflictType": "intra-story",
+                    "resolved": all(v.get("status") != "pending" for v in same_story),
+                }
+            )
+    return scoped
 
 
 def get_canon_index(project_id: Optional[str] = None) -> List[Dict[str, Any]]:

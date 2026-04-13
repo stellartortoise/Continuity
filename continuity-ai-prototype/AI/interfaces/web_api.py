@@ -22,6 +22,7 @@ class ExtractRequest(BaseModel):
     text: str
     time_id: Optional[str] = "t_001"
     use_llm: Optional[bool] = None
+    canon_entities: Optional[List[Dict[str, Any]]] = None
 
 class ValidateFactsRequest(BaseModel):
     entities: List[Dict[str, Any]]
@@ -208,8 +209,31 @@ async def _run_job(
         text = (req.text or "").strip()
         time_id = req.time_id or "t_001"
 
-        # --- Phase 1: NER ---
-        entities: List[Dict[str, Any]] = await ner_extractor.extract_entities(text=text, time_id=time_id)
+        def _triage_progress_cb(info: Dict[str, Any]):
+            processed = int(info.get("processed", 0))
+            total = max(1, int(info.get("total", 1)))
+            frac = processed / total
+            job["progress"] = 0.02 + 0.28 * frac
+            job["processed"] = processed
+            job["total"] = total
+            job["currentEntityId"] = info.get("entityId")
+            job["currentEntityName"] = info.get("entityName")
+
+        # --- Phase 1: Canon triage or NER fallback ---
+        entities: List[Dict[str, Any]] = []
+        canon_entities = [e for e in (req.canon_entities or []) if isinstance(e, dict)]
+        if canon_entities and fact_extractor:
+            job["message"] = "Triaging canonical entities…"
+            entities = await fact_extractor.triage_entities(
+                text=text,
+                entities=canon_entities,
+                time_id=time_id,
+                progress=_triage_progress_cb,
+            )
+            if not entities:
+                job["message"] = "No canonical matches found; falling back to NER…"
+        if not entities:
+            entities = await ner_extractor.extract_entities(text=text, time_id=time_id)
         job["progress"] = 0.30  # mark NER as 30% of the total
         job["message"] = f"Found {len(entities)} entities."
 

@@ -8,10 +8,7 @@ const EntityAnalysisCard = ({
   onReject,
   onChangeEntity,
 }) => {
-  const visibleFacts = (entity.facts || []).filter((fact) => {
-    if (typeof fact.matchConfidence !== "number") return true;
-    return fact.matchConfidence > 0;
-  });
+  const visibleFacts = entity.facts || [];
 
   return (
     <div className="entity-card">
@@ -39,6 +36,18 @@ const EntityAnalysisCard = ({
               {fact.matchAmbiguous ? (
                 <span style={{ marginLeft: "0.5rem", color: "#b55" }}>
                   Ambiguous entity match
+                </span>
+              ) : null}
+              {fact.needsReview ? (
+                <span style={{ marginLeft: "0.5rem", color: "#d68c1f" }}>
+                  Needs quality review
+                </span>
+              ) : null}
+
+              {(typeof fact.atomicityScore === "number" || typeof fact.schemaAlignmentScore === "number") ? (
+                <span style={{ display: "block", marginTop: "0.2rem", opacity: 0.8 }}>
+                  {typeof fact.atomicityScore === "number" ? `Atomicity: ${Math.round(fact.atomicityScore * 100)}%` : null}
+                  {typeof fact.schemaAlignmentScore === "number" ? ` | Schema match: ${Math.round(fact.schemaAlignmentScore * 100)}%` : null}
                 </span>
               ) : null}
 

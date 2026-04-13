@@ -98,9 +98,11 @@ const SegmentUpload = ({setSegments}) => {
                 summary:result.summary,
                 text:segment,
                 entities:result.entities,
+                entitySummary: result.entitySummary || [],
                 reviewSessionId: result.reviewSessionId,
                 pendingFactsCount: result.pendingFactsCount,
                 conflictsDetected: result.conflictsDetected,
+                crossStoryConflictsCount: result.crossStoryConflictsCount || 0,
             }
 
             // Save it to global state
@@ -165,7 +167,24 @@ const SegmentUpload = ({setSegments}) => {
     const handleAccept = async (entityId, factId) => {
         setError(null);
         try {
-            await reviewFact(factId, "approved", null, null, true);
+            const currentFact = (analysis?.entities || [])
+                .flatMap((entity) => entity.facts || [])
+                .find((fact) => fact.id === factId);
+            const isLowQuality = Boolean(
+                currentFact && (
+                    currentFact.needsReview ||
+                    (typeof currentFact.atomicityScore === "number" && currentFact.atomicityScore < 0.75) ||
+                    (typeof currentFact.schemaAlignmentScore === "number" && currentFact.schemaAlignmentScore < 0.55)
+                )
+            );
+            await reviewFact(
+                factId,
+                "approved",
+                null,
+                isLowQuality ? "User approved low-quality fact" : null,
+                true,
+                isLowQuality,
+            );
             updateFactLocally(entityId, factId, true);
         } catch (e) {
             setError(e.message || "Failed to approve fact");
@@ -184,7 +203,7 @@ const SegmentUpload = ({setSegments}) => {
 
     const countPendingFacts = () => {
         return (analysis?.entities || []).reduce((count, entity) => {
-            return count + (entity.facts || []).filter(f => f.accepted === null && (typeof f.matchConfidence !== "number" || f.matchConfidence > 0)).length;
+            return count + (entity.facts || []).filter(f => f.accepted === null).length;
         }, 0);
     };
 
@@ -247,7 +266,25 @@ const SegmentUpload = ({setSegments}) => {
         {analysis && (
             <div className='segment-summary' style={{padding:"2rem", backgroundColor:"red",margin:"5px", borderRadius:"8px" }}>
                 <div>{analysis.summary}</div>
-                <div style={{marginTop: "0.5rem"}}>Pending facts: {analysis.pendingFactsCount || 0} | Conflicts: {analysis.conflictsDetected || 0}</div>
+                <div style={{marginTop: "0.5rem"}}>
+                    Pending facts: {analysis.pendingFactsCount || 0} | Conflicts: {analysis.conflictsDetected || 0}
+                    {` | Cross-story conflicts: ${analysis.crossStoryConflictsCount || 0}`}
+                </div>
+                {analysis.entitySummary?.length > 0 && (
+                    <div style={{marginTop: "0.75rem", background: "rgba(255,255,255,0.08)", padding: "0.5rem", borderRadius: "6px"}}>
+                        <strong>Extraction Summary</strong>
+                        {analysis.entitySummary.map((entity) => (
+                            <div key={entity.entityId || entity.entityName} style={{marginTop: "0.35rem"}}>
+                                <div>{entity.entityName} ({entity.entityType})</div>
+                                {(entity.sections || []).map((section) => (
+                                    <div key={`${entity.entityId}-${section.name}`} style={{opacity: 0.9}}>
+                                        {section.name}: {(section.facts || []).join(" | ")}
+                                    </div>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
+                )}
                 <div style={{marginTop: "0.75rem"}}>
                     <button
                         type='button'

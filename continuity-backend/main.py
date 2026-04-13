@@ -26,6 +26,7 @@ class FactDecisionRequest(BaseModel):
     reviewed_by: Optional[str] = None
     decision_reason: Optional[str] = None
     confirm_assignment: bool = False
+    confirm_low_quality: bool = False
 
 
 class FactEntityAssignmentRequest(BaseModel):
@@ -146,6 +147,11 @@ async def get_project_entities(project_id: str):
 @app.get("/projects/{project_id}/conflicts")
 async def get_project_conflicts(project_id: str):
     return {"conflicts": controller.get_project_conflicts(project_id)}
+
+
+@app.get("/stories/{story_id}/conflicts")
+async def get_story_conflicts(story_id: str, include_cross_story: bool = False):
+    return {"conflicts": controller.get_story_conflicts(story_id, include_cross_story=include_cross_story)}
 
 
 @app.get("/projects/{project_id}/canon-index")
@@ -298,6 +304,7 @@ async def review_fact(fact_id: str, req: FactDecisionRequest):
             reviewed_by=req.reviewed_by,
             decision_reason=req.decision_reason,
             confirm_assignment=req.confirm_assignment,
+            confirm_low_quality=req.confirm_low_quality,
         )
     except ValueError as ex:
         raise HTTPException(status_code=400, detail=str(ex)) from ex
@@ -382,9 +389,17 @@ def _extract_and_persist(story_id: str, time_id: Optional[str] = None) -> Dict[s
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
 
+    canon_entities = [
+        entity
+        for entity in controller.get_entities_by_project(story.get("project_id"))
+        if entity.get("status") == "active"
+    ]
+
     payload = {
         "text": story.get("body", ""),
         "time_id": time_id or story_id,
+        "project_id": story.get("project_id"),
+        "canon_entities": canon_entities,
     }
     start = requests.post(f"{API_BASE}/entities/extract/start", json=payload, timeout=30)
     if start.status_code >= 400:
@@ -405,24 +420,80 @@ def _extract_and_persist(story_id: str, time_id: Optional[str] = None) -> Dict[s
         story_id=story_id,
         extracted_entities=ai_payload.get("entities", []),
     )
-    conflicts = controller.get_project_conflicts(story.get("project_id"))
+    story_conflicts = controller.get_story_conflicts(story_id, include_cross_story=False)
+    cross_story_conflicts = [
+        c for c in controller.get_story_conflicts(story_id, include_cross_story=True)
+        if c.get("conflictType") == "inter-story"
+    ]
     pending = sum(1 for e in persisted["entities"] for f in e.get("facts", []) if f.get("status") == "pending")
     updated_story = controller.set_story_review_metadata(
         story_id=story_id,
         review_session_id=persisted["reviewSession"]["id"],
         pending_facts_count=pending,
-        conflicts_detected=len(conflicts),
+        conflicts_detected=len(story_conflicts),
     ) or story
+
+    summary = _build_entity_summary(persisted["entities"], story_id)
 
     return {
         "story": updated_story,
         "entities": persisted["entities"],
+        "summary": summary,
         "count": len(persisted["entities"]),
         "pendingFactsCount": pending,
-        "conflictsDetected": len(conflicts),
+        "conflictsDetected": len(story_conflicts),
+        "crossStoryConflictsCount": len(cross_story_conflicts),
         "reviewSessionId": persisted["reviewSession"]["id"],
         "exportPath": ai_payload.get("exportPath"),
     }
+
+
+def _fact_section(entity_type: str, fact_text: str) -> str:
+    lower = (fact_text or "").lower()
+    if entity_type == "character":
+        if "eye" in lower or "hair" in lower or "height" in lower or "appearance" in lower:
+            return "Physical Traits"
+        if "waiting" in lower or "wants" in lower or "looking for" in lower or "goal" in lower:
+            return "Current Status / Motivation"
+        if "before" in lower or "used to" in lower or "many times" in lower or "history" in lower:
+            return "History / Backstory"
+        if " in " in lower or " at " in lower or "inside" in lower:
+            return "Current Location"
+    if entity_type == "location":
+        if "old" in lower or "dusty" in lower or "peeling" in lower or "ruined" in lower:
+            return "Age / Condition"
+        if "window" in lower or "booth" in lower or "door" in lower or "hall" in lower:
+            return "Architecture / Features"
+    if entity_type in {"event", "object"}:
+        return "Status"
+    return "Facts"
+
+
+def _build_entity_summary(entities: List[Dict[str, Any]], story_id: str) -> List[Dict[str, Any]]:
+    summary: List[Dict[str, Any]] = []
+    for ent in entities:
+        sections: Dict[str, List[str]] = {}
+        etype = ent.get("entityType") or ent.get("type") or "concept"
+        for f in ent.get("facts", []):
+            text = (f.get("fact") or "").strip()
+            if not text:
+                continue
+            sec = _fact_section(etype, text)
+            sections.setdefault(sec, []).append(text)
+
+        summary.append(
+            {
+                "storyId": story_id,
+                "entityId": ent.get("id"),
+                "entityName": ent.get("name"),
+                "entityType": etype,
+                "sections": [
+                    {"name": name, "facts": values}
+                    for name, values in sections.items()
+                ],
+            }
+        )
+    return summary
 
 
 def _sync_canon_index_for_session(session: Dict[str, Any]) -> Dict[str, Any]:

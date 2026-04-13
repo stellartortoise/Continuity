@@ -52,6 +52,9 @@ const StorySegments = ({uploadedSegments}) => {
           (stories || []).map(async (s) => {
             const entRes = await fetch(`${API_BASE}/stories/${s.id}/entities`);
             const entData = entRes.ok ? await entRes.json() : { entities: [] };
+            const conflictRes = await fetch(`${API_BASE}/stories/${s.id}/conflicts?include_cross_story=true`);
+            const conflictData = conflictRes.ok ? await conflictRes.json() : { conflicts: [] };
+            const crossStoryConflictsCount = (conflictData.conflicts || []).filter((item) => item.conflictType === "inter-story").length;
             const entities = (entData.entities || []).map((entity) => ({
               id: entity.id,
               name: entity.name,
@@ -65,6 +68,9 @@ const StorySegments = ({uploadedSegments}) => {
                 matchAmbiguous: fact.entity_match_ambiguous,
                 matchCandidates: fact.entity_match_candidates || [],
                 assignmentConfirmed: fact.entity_assignment_confirmed,
+                atomicityScore: fact.atomicity_score,
+                schemaAlignmentScore: fact.schema_alignment_score,
+                needsReview: fact.needs_review,
                 accepted: fact.status === "approved" ? true : fact.status === "rejected" ? false : null,
               })),
             }));
@@ -78,6 +84,7 @@ const StorySegments = ({uploadedSegments}) => {
               reviewSessionId: s.reviewSessionId,
               pendingFactsCount: s.pendingFactsCount,
               conflictsDetected: s.conflictsDetected,
+              crossStoryConflictsCount,
             };
           })
         );
@@ -176,7 +183,7 @@ const StorySegments = ({uploadedSegments}) => {
 
   const getPendingCount = (segment) => {
     return (segment.entities || []).reduce((count, ent) => {
-      return count + (ent.facts || []).filter(f => f.accepted === null && (typeof f.matchConfidence !== "number" || f.matchConfidence > 0)).length;
+      return count + (ent.facts || []).filter(f => f.accepted === null).length;
     }, 0);
   };
 
@@ -196,7 +203,22 @@ const StorySegments = ({uploadedSegments}) => {
         await assignFactEntity(factId, overrideEntityId);
         applyFactEntityMove(segmentId, entityId, factId, overrideEntityId);
       }
-      await reviewFact(factId, "approved", null, null, requiresExplicit);
+      const reviewedFact = findFactById(segmentId, factId)?.fact;
+      const isLowQuality = Boolean(
+        reviewedFact && (
+          reviewedFact.needsReview ||
+          (typeof reviewedFact.atomicityScore === "number" && reviewedFact.atomicityScore < 0.75) ||
+          (typeof reviewedFact.schemaAlignmentScore === "number" && reviewedFact.schemaAlignmentScore < 0.55)
+        )
+      );
+      await reviewFact(
+        factId,
+        "approved",
+        null,
+        isLowQuality ? "User approved low-quality fact" : null,
+        requiresExplicit,
+        isLowQuality,
+      );
       updateFactDecision(segmentId, overrideEntityId && overrideEntityId !== entityId ? overrideEntityId : entityId, factId, true);
     } catch (e) {
       setError(e.message || "Failed to approve fact");
@@ -291,7 +313,10 @@ const StorySegments = ({uploadedSegments}) => {
 
           <div className="segment-card-body">
             <p>{segment.summary}</p>
-            <p>Pending facts: {getPendingCount(segment)} | Conflicts: {segment.conflictsDetected || 0}</p>
+            <p>
+              Pending facts: {getPendingCount(segment)} | Conflicts: {segment.conflictsDetected || 0}
+              {` | Cross-story conflicts: ${segment.crossStoryConflictsCount || 0}`}
+            </p>
             {submitMessages[segment.id] && <p style={{color: "#2a6"}}>{submitMessages[segment.id]}</p>}
           </div>
 

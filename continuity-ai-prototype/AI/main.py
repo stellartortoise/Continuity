@@ -23,7 +23,7 @@ async def run_web_api(ner_extractor: HybridNERExtractor):
     fact_extractor = FactExtractor(
         llm=llm,
         use_llm=True,
-        max_facts_per_entity=3,
+        max_facts_per_entity=6,
         rules_fallback=True,
         temperature=0.2,
         max_tokens=120,

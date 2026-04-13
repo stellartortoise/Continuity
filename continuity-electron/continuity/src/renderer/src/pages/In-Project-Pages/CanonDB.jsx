@@ -1,6 +1,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import projectService from "../../services/projectService";
+import { reviewFact } from "../../services/aiService";
 
 const API_BASE = "http://localhost:8001";
 
@@ -31,6 +32,7 @@ const CanonDB = () => {
   const [query, setQuery] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [expandedEntityId, setExpandedEntityId] = useState(null);
   const [mergeSourceId, setMergeSourceId] = useState("");
   const [mergeTargetId, setMergeTargetId] = useState("");
   const [syncStatus, setSyncStatus] = useState({ pendingCount: 0, errorCount: 0, totalSubmitted: 0, sessions: [] });
@@ -110,6 +112,50 @@ const CanonDB = () => {
     return [...entities].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }, [entities]);
 
+  const formatFactMeta = (fact) => {
+    const pieces = [];
+    if (fact.status) pieces.push(`status: ${fact.status}`);
+    if (typeof fact.confidence === "number") pieces.push(`confidence: ${Math.round(fact.confidence * 100)}%`);
+    if (typeof fact.atomicity_score === "number") pieces.push(`atomicity: ${Math.round(fact.atomicity_score * 100)}%`);
+    if (typeof fact.schema_alignment_score === "number") pieces.push(`schema: ${Math.round(fact.schema_alignment_score * 100)}%`);
+    if (fact.needs_review) pieces.push("needs review");
+    if (fact.entity_match_ambiguous) pieces.push("ambiguous");
+    if (fact.entity_assignment_confirmed) pieces.push("assignment confirmed");
+    return pieces.join(" · ");
+  };
+
+  const handleFactReview = async (entityId, fact, nextStatus) => {
+    if (!project?.id || !fact?.id) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const isLowQuality = Boolean(
+        fact && (
+          fact.needs_review ||
+          (typeof fact.atomicity_score === "number" && fact.atomicity_score < 0.75) ||
+          (typeof fact.schema_alignment_score === "number" && fact.schema_alignment_score < 0.55)
+        )
+      );
+
+      await reviewFact(
+        fact.id,
+        nextStatus,
+        null,
+        isLowQuality ? "Canon entity review" : null,
+        Boolean(fact.entity_match_ambiguous && !fact.entity_assignment_confirmed),
+        isLowQuality && nextStatus === "approved",
+      );
+
+      await refreshEntities(project.id, query);
+      await refreshSyncStatus(project.id);
+      setExpandedEntityId(entityId);
+    } catch (err) {
+      setError(err.message || `Failed to ${nextStatus} fact`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSearch = async (event) => {
     event.preventDefault();
     if (!project?.id) return;
@@ -163,6 +209,7 @@ const CanonDB = () => {
       await refreshSyncStatus(project.id);
       setForm(emptyForm);
       setEditingId(null);
+        setExpandedEntityId(null);
     } catch (err) {
       setError(err.message || "Save failed");
     } finally {
@@ -172,6 +219,7 @@ const CanonDB = () => {
 
   const handleEdit = (entity) => {
     setEditingId(entity.id);
+    setExpandedEntityId(entity.id);
     setForm({
       name: entity.name || "",
       type: entity.entityType || entity.type || "concept",
@@ -422,8 +470,18 @@ const CanonDB = () => {
         {sortedEntities.length === 0 ? (
           <p>No Canon entities found.</p>
         ) : (
-          sortedEntities.map((entity) => (
-            <div key={entity.id} style={{ padding: "1rem", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "12px" }}>
+          sortedEntities.map((entity) => {
+            const isExpanded = expandedEntityId === entity.id || editingId === entity.id;
+            const facts = Array.isArray(entity.facts) ? [...entity.facts] : [];
+            const sortedFacts = [...facts].sort((a, b) => {
+              const aPending = a.status === "pending" ? 0 : 1;
+              const bPending = b.status === "pending" ? 0 : 1;
+              if (aPending !== bPending) return aPending - bPending;
+              return (a.fact || "").localeCompare(b.fact || "");
+            });
+
+            return (
+            <div key={entity.id} style={{ padding: "1rem", border: "1px solid rgba(255,255,255,0.12)", borderRadius: "12px", background: isExpanded ? "rgba(255,255,255,0.03)" : "transparent" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
                 <div>
                   <strong>{entity.name}</strong> <span style={{ opacity: 0.75 }}>({entity.entityType || entity.type || "concept"})</span>
@@ -432,6 +490,9 @@ const CanonDB = () => {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <button type="button" onClick={() => setExpandedEntityId((prev) => (prev === entity.id ? null : entity.id))} disabled={saving}>
+                    {isExpanded ? "Hide Details" : "View Details"}
+                  </button>
                   <button type="button" onClick={() => handleEdit(entity)} disabled={saving}>Edit</button>
                   <button type="button" onClick={() => handleDelete(entity.id)} disabled={saving}>Delete</button>
                 </div>
@@ -442,8 +503,52 @@ const CanonDB = () => {
               <div style={{ marginTop: "0.5rem", opacity: 0.75 }}>
                 Facts: {Array.isArray(entity.facts) ? entity.facts.length : 0} · Stories: {entity.story_ids?.length || 0}
               </div>
+              {isExpanded ? (
+                <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.12)" }}>
+                  <strong style={{ display: "block", marginBottom: "0.5rem" }}>Facts & Details</strong>
+                  {sortedFacts.length === 0 ? (
+                    <p style={{ margin: 0, opacity: 0.75 }}>No facts stored for this entity yet.</p>
+                  ) : (
+                    <div style={{ display: "grid", gap: "0.65rem" }}>
+                      {sortedFacts.map((fact) => (
+                        <div key={fact.id} style={{ padding: "0.65rem", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "10px" }}>
+                          <div style={{ fontWeight: 600 }}>{fact.fact}</div>
+                          <div style={{ opacity: 0.8, marginTop: "0.25rem" }}>{formatFactMeta(fact) || "No fact metadata"}</div>
+                          <div style={{ marginTop: "0.25rem", opacity: 0.75 }}>
+                            Evidence: {fact.evidence?.timeId || "n/a"}
+                            {typeof fact.evidence?.start === "number" && typeof fact.evidence?.end === "number" ? ` · span ${fact.evidence.start}-${fact.evidence.end}` : ""}
+                          </div>
+                          {fact.sourceText ? <div style={{ marginTop: "0.35rem", opacity: 0.75 }}>Source: {fact.sourceText}</div> : null}
+                          <div style={{ marginTop: "0.35rem", opacity: 0.7 }}>
+                            Match: {typeof fact.entity_match_confidence === "number" ? `${Math.round(fact.entity_match_confidence * 100)}%` : "n/a"}
+                            {fact.entity_match_ambiguous ? " · ambiguous" : ""}
+                            {Array.isArray(fact.entity_match_candidates) && fact.entity_match_candidates.length > 0 ? ` · candidates: ${fact.entity_match_candidates.length}` : ""}
+                          </div>
+                          <div style={{ marginTop: "0.6rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              onClick={() => handleFactReview(entity.id, fact, "approved")}
+                              disabled={saving}
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFactReview(entity.id, fact, "rejected")}
+                              disabled={saving}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>
