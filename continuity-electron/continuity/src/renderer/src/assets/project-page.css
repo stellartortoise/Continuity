@@ -70,8 +70,59 @@
 }
 
 
+/* info cards */
+.info-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 26px 0;
+}
 
+.stat-card {
+    background: #1e212a;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+    padding: 14px;
 
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    transition: 0.15s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(87, 153, 188, 0.4);
+}
+
+.stat-value {
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: white;
+    font-family: var(--cont-text-font);
+}
+
+.stat-label {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+.stat-blue .stat-value {
+    color: var(--cont-light-blue);
+}
+
+.stat-green .stat-value {
+    color: #4cc38a;
+}
+
+.stat-orange .stat-value {
+    color: var(--cont-orange);
+}
+
+.stat-icon {
+    font-size: 1.2rem;
+    opacity: 0.8;
+}
 
 
 
@@ -313,10 +364,18 @@
     background: #1e212a;
     border: 1px solid rgba(255,255,255,0.06);
     box-shadow: 0 6px 16px rgba(0,0,0,0.25);
-    transition: 0.2s ease;
+    transition: transform 0.2s ease,
+                box-shadow 0.2s ease,
+                border-color 0.2s ease;
 }
 .segment-card:hover {
-    border-color: rgba(87, 153, 188, 0.4);
+    transform: translateY(-4px);
+
+    border-color: rgba(87, 153, 188, 0.5);
+
+    box-shadow:
+        0 10px 24px rgba(0,0,0,0.35),
+        0 0 0 1px rgba(87, 153, 188, 0.15);
 }
 
 .segment-card-header {
